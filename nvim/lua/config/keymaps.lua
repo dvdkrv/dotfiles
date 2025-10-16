@@ -101,6 +101,7 @@ vim.keymap.set("n", "<leader>o", "<cmd>Lspsaga outline<cr>", { desc = "Outline" 
 vim.keymap.set("n", "-", "<cmd>Oil<cr>", { desc = "Open Oil" })
 
 -- Terminal mode keymaps
+vim.keymap.set("t", "<Esc>", "<C-\\><C-n>", { desc = "Exit terminal mode" })
 vim.keymap.set("t", "<A-h>", "<C-\\><C-N><C-w>h", { desc = "Move to left window" })
 vim.keymap.set("t", "<A-j>", "<C-\\><C-N><C-w>j", { desc = "Move to lower window" })
 vim.keymap.set("t", "<A-k>", "<C-\\><C-N><C-w>k", { desc = "Move to upper window" })
