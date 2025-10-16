@@ -12,7 +12,12 @@ return {
 
 		telescope.setup({
 			defaults = {
-				path_display = { "truncate" },
+				path_display = { "smart" },
+				-- Handle large files and long lines better
+				preview = {
+					filesize_limit = 1, -- MB - skip preview for files larger than this
+					timeout = 250, -- ms - timeout for preview
+				},
 				mappings = {
 					n = {
 						["dd"] = actions.delete_buffer,
