@@ -79,11 +79,19 @@ vim.api.nvim_set_hl(0, "Cursor", {})
 
 -- Ensure transparency for floating windows and borders, but keep cursorline visible
 local function apply_transparency()
+	-- Try to get Catppuccin colors if available
+	local colors = nil
+	local has_catppuccin, catppuccin = pcall(require, "catppuccin.palettes")
+	if has_catppuccin then
+		colors = catppuccin.get_palette()
+	end
+
 	vim.api.nvim_set_hl(0, "NormalFloat", { bg = "NONE" })
-	vim.api.nvim_set_hl(0, "FloatBorder", { bg = "NONE" })
+	vim.api.nvim_set_hl(0, "FloatBorder", { bg = "NONE", fg = colors and colors.surface2 or nil })
+	vim.api.nvim_set_hl(0, "FloatTitle", { bg = "NONE", fg = colors and colors.surface2 or nil })
 	vim.api.nvim_set_hl(0, "Pmenu", { bg = "NONE" })
-	-- Make CursorLine visible with Catppuccin surface color
-	vim.api.nvim_set_hl(0, "CursorLine", { bg = "#313244" })
+	-- Make CursorLine visible with Catppuccin surface color, or fallback to default
+	vim.api.nvim_set_hl(0, "CursorLine", { bg = colors and colors.surface0 or "NONE", underline = not colors })
 end
 
 -- Apply on startup and after colorscheme changes
