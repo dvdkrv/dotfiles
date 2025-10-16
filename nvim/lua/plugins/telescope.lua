@@ -14,11 +14,7 @@ return {
 			defaults = {
 				path_display = { "truncate" },
 				mappings = {
-					i = {
-						["<C-q>"] = actions.send_selected_to_qflist + actions.open_qflist,
-					},
 					n = {
-						["<C-q>"] = actions.send_selected_to_qflist + actions.open_qflist,
 						["dd"] = actions.delete_buffer,
 					},
 				},
