@@ -23,10 +23,6 @@ vim.opt.pumheight = 10 -- Max items in completion menu
 vim.opt.pumblend = 0 -- Transparency for popups
 vim.opt.winblend = 0 -- Transparency for floating windows
 
--- Splits
-vim.opt.splitright = true -- Vertical splits to the right
-vim.opt.splitbelow = true -- Horizontal splits below
-
 -- Editing
 vim.opt.wrap = false -- Don't wrap long lines
 vim.opt.linebreak = true -- Wrap at word boundaries

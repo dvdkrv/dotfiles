@@ -3,6 +3,18 @@ return {
 	lazy = false, -- Load immediately to handle directory opening
 	opts = {
 		default_file_explorer = true,
+		float = {
+			border = "rounded",
+		},
+		preview = {
+			border = "rounded",
+		},
+		progress = {
+			border = "rounded",
+		},
+		keymaps_help = {
+			border = "rounded",
+		},
 	},
 	dependencies = { "nvim-tree/nvim-web-devicons" },
 	init = function()

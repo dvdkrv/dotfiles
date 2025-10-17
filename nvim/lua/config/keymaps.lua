@@ -98,7 +98,7 @@ vim.keymap.set("n", "<leader>rn", "<cmd>Lspsaga rename<cr>", { desc = "Rename sy
 vim.keymap.set("n", "<leader>o", "<cmd>Lspsaga outline<cr>", { desc = "Outline" })
 
 -- Oil file manager
-vim.keymap.set("n", "-", "<cmd>Oil<cr>", { desc = "Open Oil" })
+vim.keymap.set("n", "<leader>-", "<cmd>Oil<cr>", { desc = "Open Oil" })
 
 -- Terminal mode keymaps
 vim.keymap.set("t", "<Esc>", "<C-\\><C-n>", { desc = "Exit terminal mode" })
