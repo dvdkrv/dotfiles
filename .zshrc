@@ -11,7 +11,7 @@ fi
 
 # zoxide
 eval "$(zoxide init zsh)"
-alias cd=zoxide
+alias cd=z
 
 # fzf
 source <(fzf --zsh)
