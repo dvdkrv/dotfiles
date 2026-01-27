@@ -11,8 +11,8 @@ vim.keymap.set("n", "<leader>Q", "<cmd>qa!<cr>", { desc = "Quit all without savi
 vim.keymap.set("n", "<Esc>", "<cmd>nohlsearch<cr>", { desc = "Clear search highlight" })
 
 -- Better indenting
-vim.keymap.set("v", "<", "<gv", { desc = "Indent left" })
-vim.keymap.set("v", ">", ">gv", { desc = "Indent right" })
+-- vim.keymap.set("v", "<", "<gv", { desc = "Indent left" })
+-- vim.keymap.set("v", ">", ">gv", { desc = "Indent right" })
 
 -- Move lines up/down (using J/K instead of j/k to avoid conflict with window nav)
 vim.keymap.set("n", "<A-J>", "<cmd>m .+1<cr>==", { desc = "Move line down" })

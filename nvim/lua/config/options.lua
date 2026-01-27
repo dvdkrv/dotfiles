@@ -1,7 +1,6 @@
 -- General settings
-vim.opt.mouse = "a"               -- Enable mouse support
-vim.opt.clipboard = "unnamedplus" -- Use system clipboard
-vim.opt.undofile = true           -- Persistent undo
+vim.opt.mouse = "a"      -- Enable mouse support
+vim.opt.undofile = true  -- Persistent undo
 vim.opt.undolevels = 10000
 vim.opt.backup = false
 vim.opt.writebackup = false
