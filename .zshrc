@@ -27,4 +27,4 @@ source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 
 # fzf-tab
 autoload -U compinit; compinit
-source ~/.zsh/fzf-tab.plugin.zsh
+source ~/.zsh/fzf-tab/fzf-tab.plugin.zsh
