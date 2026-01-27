@@ -59,6 +59,15 @@ else
     cd "$ZSH_DIR/zsh-syntax-highlighting" && git pull && cd -
 fi
 
+## Instal fzf-tab
+if [ ! -d "$ZSH_DIR/zsh-syntax-highlighting" ]; then
+  git clone https://github.com/Aloxaf/fzf-tab "$ZSH_DIR/fzf-tab"
+else
+    echo_info "fzf-tab already installed, updating..."
+    cd "$ZSH_DIR/fzf-tab" && git pull && cd -
+fi
+
+
 # Backup existing .zshrc if it exists and is not a symlink
 if [ -f "$HOME/.zshrc" ] && [ ! -L "$HOME/.zshrc" ]; then
     echo_warning "Backing up existing .zshrc to .zshrc.backup"
