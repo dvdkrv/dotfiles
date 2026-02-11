@@ -107,12 +107,49 @@ vim.keymap.set("t", "<A-j>", "<C-\\><C-N><C-w>j", { desc = "Move to lower window
 vim.keymap.set("t", "<A-k>", "<C-\\><C-N><C-w>k", { desc = "Move to upper window" })
 vim.keymap.set("t", "<A-l>", "<C-\\><C-N><C-w>l", { desc = "Move to right window" })
 
--- Window navigation (Alt+hjkl to navigate between panes)
-vim.keymap.set("i", "<A-h>", "<C-\\><C-N><C-w>h", { desc = "Move to left window" })
-vim.keymap.set("i", "<A-j>", "<C-\\><C-N><C-w>j", { desc = "Move to lower window" })
-vim.keymap.set("i", "<A-k>", "<C-\\><C-N><C-w>k", { desc = "Move to upper window" })
-vim.keymap.set("i", "<A-l>", "<C-\\><C-N><C-w>l", { desc = "Move to right window" })
-vim.keymap.set("n", "<A-h>", "<C-w>h", { desc = "Move to left window" })
-vim.keymap.set("n", "<A-j>", "<C-w>j", { desc = "Move to lower window" })
-vim.keymap.set("n", "<A-k>", "<C-w>k", { desc = "Move to upper window" })
-vim.keymap.set("n", "<A-l>", "<C-w>l", { desc = "Move to right window" })
+-- Window navigation (Alt+hjkl to navigate between vim and tmux panes)
+-- Helper function to navigate seamlessly between vim and tmux
+local function navigate(direction)
+	local vim_direction = ({ h = "h", j = "j", k = "k", l = "l" })[direction]
+	local tmux_direction = ({ h = "L", j = "D", k = "U", l = "R" })[direction]
+
+	-- Store current window ID
+	local current_win = vim.fn.winnr()
+
+	-- Try to navigate within vim
+	vim.cmd("wincmd " .. vim_direction)
+
+	-- If window didn't change, we're at the edge - navigate in tmux
+	if vim.fn.winnr() == current_win then
+		vim.fn.system("tmux select-pane -" .. tmux_direction)
+	end
+end
+
+vim.keymap.set("i", "<A-h>", function()
+	vim.cmd("stopinsert")
+	navigate("h")
+end, { desc = "Move to left window" })
+vim.keymap.set("i", "<A-j>", function()
+	vim.cmd("stopinsert")
+	navigate("j")
+end, { desc = "Move to lower window" })
+vim.keymap.set("i", "<A-k>", function()
+	vim.cmd("stopinsert")
+	navigate("k")
+end, { desc = "Move to upper window" })
+vim.keymap.set("i", "<A-l>", function()
+	vim.cmd("stopinsert")
+	navigate("l")
+end, { desc = "Move to right window" })
+vim.keymap.set("n", "<A-h>", function()
+	navigate("h")
+end, { desc = "Move to left window" })
+vim.keymap.set("n", "<A-j>", function()
+	navigate("j")
+end, { desc = "Move to lower window" })
+vim.keymap.set("n", "<A-k>", function()
+	navigate("k")
+end, { desc = "Move to upper window" })
+vim.keymap.set("n", "<A-l>", function()
+	navigate("l")
+end, { desc = "Move to right window" })

@@ -35,7 +35,7 @@ fi
 
 # Install required packages
 echo_info "Installing packages via Homebrew..."
-brew install neovim zsh fzf zoxide starship
+brew install neovim zsh fzf zoxide starship tmux
 
 # Create .zsh directory for plugins
 ZSH_DIR="$HOME/.zsh"
@@ -77,6 +77,16 @@ fi
 # Symlink .zshrc
 echo_info "Creating symlink for .zshrc..."
 ln -sf "$DOTFILES_DIR/.zshrc" "$HOME/.zshrc"
+
+# Backup existing .tmux.conf if it exists and is not a symlink
+if [ -f "$HOME/.tmux.conf" ] && [ ! -L "$HOME/.tmux.conf" ]; then
+    echo_warning "Backing up existing .tmux.conf to .tmux.conf.backup"
+    mv "$HOME/.tmux.conf" "$HOME/.tmux.conf.backup"
+fi
+
+# Symlink .tmux.conf
+echo_info "Creating symlink for .tmux.conf..."
+ln -sf "$DOTFILES_DIR/.tmux.conf" "$HOME/.tmux.conf"
 
 # Backup existing nvim config if it exists and is not a symlink
 if [ -d "$HOME/.config/nvim" ] && [ ! -L "$HOME/.config/nvim" ]; then
