@@ -9,10 +9,6 @@ else
   export EDITOR='nvim'
 fi
 
-# zoxide
-eval "$(zoxide init zsh)"
-alias cd=z
-
 # fzf
 source <(fzf --zsh)
 
@@ -28,3 +24,7 @@ source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 # fzf-tab
 autoload -U compinit; compinit
 source ~/.zsh/fzf-tab/fzf-tab.plugin.zsh
+
+# zoxide (must be last)
+eval "$(zoxide init zsh)"
+alias cd=z
