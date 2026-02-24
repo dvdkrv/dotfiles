@@ -59,8 +59,8 @@ else
     cd "$ZSH_DIR/zsh-syntax-highlighting" && git pull && cd -
 fi
 
-## Instal fzf-tab
-if [ ! -d "$ZSH_DIR/zsh-syntax-highlighting" ]; then
+## Install fzf-tab
+if [ ! -d "$ZSH_DIR/fzf-tab" ]; then
   git clone https://github.com/Aloxaf/fzf-tab "$ZSH_DIR/fzf-tab"
 else
     echo_info "fzf-tab already installed, updating..."
