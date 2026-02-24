@@ -26,5 +26,6 @@ autoload -U compinit; compinit
 source ~/.zsh/fzf-tab/fzf-tab.plugin.zsh
 
 # zoxide (must be last)
+export _ZO_DOCTOR=0
 eval "$(zoxide init zsh)"
 alias cd=z
