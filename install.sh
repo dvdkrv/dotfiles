@@ -105,6 +105,11 @@ ln -sf "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
 echo_info "Installing nvim plugins..."
 nvim --headless "+Lazy! sync" +qa
 
+# Symlink CLAUDE.md (global Claude instructions)
+echo_info "Linking CLAUDE.md..."
+mkdir -p "$HOME/.claude"
+ln -sf "$DOTFILES_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+
 # Symlink claude skills
 echo_info "Linking claude skills..."
 mkdir -p "$HOME/.claude/skills"
