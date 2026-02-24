@@ -105,6 +105,20 @@ ln -sf "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
 echo_info "Installing nvim plugins..."
 nvim --headless "+Lazy! sync" +qa
 
+# Symlink claude skills
+echo_info "Linking claude skills..."
+mkdir -p "$HOME/.claude/skills"
+for skill_dir in "$DOTFILES_DIR/claude/skills"/*/; do
+    skill_name="$(basename "$skill_dir")"
+    target="$HOME/.claude/skills/$skill_name"
+    if [ ! -e "$target" ]; then
+        ln -sf "$skill_dir" "$target"
+        echo_info "  Linked skill: $skill_name"
+    else
+        echo_info "  Skill already exists: $skill_name"
+    fi
+done
+
 echo ""
 echo_info "Installation complete!"
 echo_info "Please restart your terminal or run: source ~/.zshrc"

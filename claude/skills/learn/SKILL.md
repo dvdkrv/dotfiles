@@ -1,8 +1,11 @@
-#!/bin/bash
-# Learn Skill - Initiates Zettelkasten learning mode
-# Usage: /learn [topic or question]
+---
+name: learn
+description: Use when the user wants to learn a concept and have it captured as atomic Zettelkasten notes. Triggers learning mode where Claude explains the topic and creates atomic notes in the knowledge base.
+user_invocable: true
+---
 
-cat << 'EOF'
+# learn
+
 You are now in LEARNING MODE - Zettelkasten Tutorial Mode.
 
 WORKFLOW:
@@ -26,4 +29,3 @@ TEACHING STYLE:
 - Break complex topics into digestible atomic pieces
 
 Begin by asking the user what they want to learn or understand.
-EOF
