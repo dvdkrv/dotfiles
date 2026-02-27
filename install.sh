@@ -124,6 +124,17 @@ for skill_dir in "$DOTFILES_DIR/claude/skills"/*/; do
     fi
 done
 
+# Symlink claude hooks
+echo_info "Linking claude hooks..."
+mkdir -p "$HOME/.claude/hooks"
+for hook_file in "$DOTFILES_DIR/claude/hooks/"*.sh; do
+    [ -f "$hook_file" ] || continue
+    hook_name="$(basename "$hook_file")"
+    ln -sf "$hook_file" "$HOME/.claude/hooks/$hook_name"
+    chmod +x "$hook_file"
+    echo_info "  Linked hook: $hook_name"
+done
+
 echo ""
 echo_info "Installation complete!"
 echo_info "Please restart your terminal or run: source ~/.zshrc"
