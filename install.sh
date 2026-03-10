@@ -105,6 +105,17 @@ ln -sf "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
 echo_info "Installing nvim plugins..."
 nvim --headless "+Lazy! sync" +qa
 
+# Symlink scripts to ~/.local/bin
+echo_info "Linking scripts..."
+mkdir -p "$HOME/.local/bin"
+for script in "$DOTFILES_DIR/scripts/"*.sh; do
+    [ -f "$script" ] || continue
+    script_name="$(basename "$script")"
+    ln -sf "$script" "$HOME/.local/bin/$script_name"
+    chmod +x "$script"
+    echo_info "  Linked script: $script_name"
+done
+
 # Symlink CLAUDE.md (global Claude instructions)
 echo_info "Linking CLAUDE.md..."
 mkdir -p "$HOME/.claude"
