@@ -2,6 +2,12 @@
 
 export SHELL="/usr/bin/zsh"
 
+# Stable SSH agent socket (fixes stale SSH_AUTH_SOCK in long-running processes like Claude Code)
+if [[ -n "$SSH_AUTH_SOCK" && "$SSH_AUTH_SOCK" != "$HOME/.ssh/ssh_auth_sock" ]]; then
+    ln -sf "$SSH_AUTH_SOCK" "$HOME/.ssh/ssh_auth_sock" 2>/dev/null
+fi
+export SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"
+
 # Preferred editor for local and remote sessions
 if [[ -n $SSH_CONNECTION ]]; then
   export EDITOR='vim'
