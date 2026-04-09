@@ -3,8 +3,11 @@
 # Brewfile.darwin hash: {{ if eq .chezmoi.os "darwin" }}{{ include "dot_Brewfile.darwin" | sha256sum }}{{ end }}
 set -e
 
-brew bundle --file="$HOME/.Brewfile"
+# Skip gracefully on machines where brew is not available
+command -v brew &>/dev/null || exit 0
+
+brew bundle --file="$CHEZMOI_SOURCE_DIR/dot_Brewfile"
 
 {{ if eq .chezmoi.os "darwin" -}}
-HOMEBREW_CASK_OPTS="--no-quarantine" brew bundle --file="$HOME/.Brewfile.darwin"
+HOMEBREW_CASK_OPTS="--no-quarantine" brew bundle --file="$CHEZMOI_SOURCE_DIR/dot_Brewfile.darwin"
 {{ end -}}

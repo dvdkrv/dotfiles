@@ -1,2 +1,5 @@
-[chezmoi]
-    sourceDir = {{ .chezmoi.sourceDir | quote }}
+{{- $work := promptBoolOnce . "work" "Ansible-managed ~/.zshrc on this machine?" -}}
+sourceDir = {{ .chezmoi.sourceDir | quote }}
+
+[data]
+    work = {{ $work }}

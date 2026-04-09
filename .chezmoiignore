@@ -1,4 +1,12 @@
 # Repo-level files — not dotfiles to be deployed to $HOME
 bootstrap.sh
+install.sh
 .gitignore
 ghostty/
+
+# Deploy ~/.personal-zshrc on work machine, ~/.zshrc everywhere else
+{{ if .work -}}
+.zshrc
+{{ else -}}
+.personal-zshrc
+{{ end -}}
