@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Brewfile hash: {{ include "dot_Brewfile" | sha256sum }}
+# Brewfile.darwin hash: {{ if eq .chezmoi.os "darwin" }}{{ include "dot_Brewfile.darwin" | sha256sum }}{{ end }}
+set -e
+
+brew bundle --file="$HOME/.Brewfile"
+
+{{ if eq .chezmoi.os "darwin" -}}
+HOMEBREW_CASK_OPTS="--no-quarantine" brew bundle --file="$HOME/.Brewfile.darwin"
+{{ end -}}

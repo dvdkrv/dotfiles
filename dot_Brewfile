@@ -1,0 +1,10 @@
+# Cross-platform packages (macOS + Linux via Linuxbrew)
+brew "neovim"
+brew "zsh"
+brew "fzf"
+brew "zoxide"
+brew "starship"
+brew "tmux"
+brew "zsh-autosuggestions"
+brew "zsh-syntax-highlighting"
+brew "chezmoi"

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# nvim pack lock: {{ include "dot_config/nvim/nvim-pack-lock.json" | sha256sum }}
+set -e
+
+nvim --headless -c "helptags ALL" -c "q"

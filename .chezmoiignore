@@ -1,0 +1,4 @@
+# Repo-level files — not dotfiles to be deployed to $HOME
+bootstrap.sh
+.gitignore
+ghostty/
