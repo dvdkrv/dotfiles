@@ -26,18 +26,23 @@ eval "$(starship init zsh)"
 
 # Zsh plugins (brew-managed with git-clone fallback for non-brew environments)
 BREW_PREFIX="$(brew --prefix 2>/dev/null)"
-if [[ -n "$BREW_PREFIX" && -f "$BREW_PREFIX/share/zsh-autosuggestions/zsh-autosuggestions.zsh" ]]; then
-    source "$BREW_PREFIX/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
-elif [[ -f "$HOME/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh" ]]; then
-    source "$HOME/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh"
-fi
-if [[ -n "$BREW_PREFIX" && -f "$BREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]]; then
-    source "$BREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-elif [[ -f "$HOME/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]]; then
-    source "$HOME/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-fi
+_load_zsh_plugin() {
+    local name="$1"
+    if [[ -n "$BREW_PREFIX" && -f "$BREW_PREFIX/share/$name/$name.zsh" ]]; then
+        source "$BREW_PREFIX/share/$name/$name.zsh"
+    elif [[ -f "$HOME/.zsh/$name/$name.zsh" ]]; then
+        source "$HOME/.zsh/$name/$name.zsh"
+    fi
+}
+_load_zsh_plugin zsh-autosuggestions
+_load_zsh_plugin zsh-syntax-highlighting
 
-autoload -U compinit; compinit
+autoload -U compinit
+if [[ -n ~/.zcompdump(#qN.mh+24) ]]; then
+    compinit
+else
+    compinit -C
+fi
 source ~/.zsh/fzf-tab/fzf-tab.plugin.zsh
 
 # Zoxide (must be last)
