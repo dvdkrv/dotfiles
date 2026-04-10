@@ -5,7 +5,7 @@ install.sh
 ghostty/
 
 # Deploy ~/.personal-zshrc on work machine, ~/.zshrc everywhere else
-{{ if .work -}}
+{{ if (default false .work) -}}
 .zshrc
 {{ else -}}
 .personal-zshrc
