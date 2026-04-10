@@ -3,7 +3,13 @@
 # Brewfile.darwin hash: {{ if eq .chezmoi.os "darwin" }}{{ include "dot_Brewfile.darwin" | sha256sum }}{{ end }}
 set -e
 
-# Skip gracefully on machines where brew is not available
+# Bring brew into PATH if installed but not yet on PATH (e.g. first chezmoi run
+# on Linux where run_once_before_00 just installed it in a sibling subprocess)
+if ! command -v brew &>/dev/null; then
+    for _prefix in /home/linuxbrew/.linuxbrew /opt/homebrew /usr/local; do
+        [[ -x "$_prefix/bin/brew" ]] && eval "$($_prefix/bin/brew shellenv)" && break
+    done
+fi
 command -v brew &>/dev/null || exit 0
 
 brew bundle --file="$CHEZMOI_SOURCE_DIR/dot_Brewfile"
