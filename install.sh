@@ -10,4 +10,7 @@ if ! command -v chezmoi &>/dev/null; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
+# Trust the source dir — workspace environments may pre-populate it as a different UID
+git config --global --add safe.directory "$DOTFILES_DIR"
+
 chezmoi init --source "$DOTFILES_DIR" --apply
