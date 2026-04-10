@@ -10,7 +10,18 @@ if ! command -v chezmoi &>/dev/null; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
-# Trust the source dir — workspace environments may pre-populate it as a different UID
-git config --global --add safe.directory "$DOTFILES_DIR"
+# Write chezmoi config manually and apply directly — avoids `chezmoi init`
+# which runs git against the source dir and fails when .git is owned by a
+# different UID (common in workspace environments that pre-populate dotfiles).
+CHEZMOI_CFG="$HOME/.config/chezmoi/chezmoi.toml"
+if [[ ! -f "$CHEZMOI_CFG" ]]; then
+    mkdir -p "$(dirname "$CHEZMOI_CFG")"
+    cat > "$CHEZMOI_CFG" <<EOF
+sourceDir = "$DOTFILES_DIR"
 
-chezmoi init --source "$DOTFILES_DIR" --apply
+[data]
+    work = false
+EOF
+fi
+
+chezmoi apply --source "$DOTFILES_DIR"
