@@ -1,5 +1,11 @@
 export SHELL="/usr/bin/zsh"
 
+# Initialize brew PATH (Linuxbrew on workspaces, Homebrew on macOS)
+for _prefix in /home/linuxbrew/.linuxbrew /opt/homebrew /usr/local; do
+    [[ -x "$_prefix/bin/brew" ]] && eval "$($_prefix/bin/brew shellenv)" && break
+done
+unset _prefix
+
 # Stable SSH agent socket (fixes stale SSH_AUTH_SOCK in long-running processes like Claude Code)
 if [[ -n "$SSH_AUTH_SOCK" && "$SSH_AUTH_SOCK" != "$HOME/.ssh/ssh_auth_sock" ]]; then
     ln -sf "$SSH_AUTH_SOCK" "$HOME/.ssh/ssh_auth_sock" 2>/dev/null
