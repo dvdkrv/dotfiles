@@ -2,4 +2,6 @@
 # nvim pack lock: {{ include "dot_config/nvim/nvim-pack-lock.json" | sha256sum }}
 set -e
 
+command -v nvim &>/dev/null || exit 0
+
 nvim --headless -c "helptags ALL" -c "q"
