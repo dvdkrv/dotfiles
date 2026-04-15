@@ -5,7 +5,15 @@ STATE="${XDG_STATE_HOME:-$HOME/.local/state}/theme"
 mkdir -p "$(dirname "$STATE")"
 
 current=$(cat "$STATE" 2>/dev/null || echo "dark")
-next=$([[ "$current" == "dark" ]] && echo "light" || echo "dark")
+
+# Use explicit argument if provided (dark|light), otherwise toggle
+if [[ "$1" == "dark" || "$1" == "light" ]]; then
+    next="$1"
+else
+    next=$([[ "$current" == "dark" ]] && echo "light" || echo "dark")
+fi
+
+[[ "$next" == "$current" ]] && exit 0
 echo "$next" > "$STATE"
 
 if [[ "$next" == "dark" ]]; then

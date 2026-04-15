@@ -12,6 +12,9 @@ if [[ -n "$SSH_AUTH_SOCK" && "$SSH_AUTH_SOCK" != "$HOME/.ssh/ssh_auth_sock" ]]; 
 fi
 export SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"
 
+# Export current theme so remote tmux sessions can pick it up via SendEnv LC_TERMINAL_THEME
+export LC_TERMINAL_THEME=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/theme" 2>/dev/null || echo "dark")
+
 # Editor
 if [[ -n $SSH_CONNECTION ]]; then
   export EDITOR='vim'
