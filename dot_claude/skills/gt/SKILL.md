@@ -1,3 +1,9 @@
+---
+name: gt
+description: Graphite (gt) stacked-PR workflow reference. Invoke explicitly via /gt; not auto-invoked by the model.
+disable-model-invocation: true
+---
+
 You are now in Graphite workflow mode. Use `gt` commands for all branch and PR operations in this session.
 
 ## Key Commands
