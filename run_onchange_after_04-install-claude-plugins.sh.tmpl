@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Install Claude Code plugins declared here. Re-runs whenever this script
+# changes (chezmoi onchange). Idempotent: skips already-registered
+# marketplaces and already-installed plugins.
+#
+# Marketplaces and plugins are kept in sync with the enabledPlugins block
+# in dot_claude/settings.json.tmpl. Most marketplaces (datadog-claude-plugins,
+# claude-plugins-official, claude-code-plugins) are bootstrapped out-of-band
+# by other tooling; this script handles personal additions only.
+set -e
+
+command -v claude &>/dev/null || exit 0
+
+# marketplace_name -> source spec accepted by `claude plugin marketplace add`
+declare -A MARKETPLACES=(
+  ["caveman"]="JuliusBrussee/caveman"
+)
+
+# plugins to install, in plugin@marketplace form
+PLUGINS=(
+  "caveman@caveman"
+)
+
+existing_marketplaces="$(claude plugin marketplace list 2>/dev/null || true)"
+for name in "${!MARKETPLACES[@]}"; do
+  if ! awk -v n="$name" 'NF==2 && $2==n {found=1} END {exit !found}' <<<"$existing_marketplaces"; then
+    claude plugin marketplace add "${MARKETPLACES[$name]}" || true
+  fi
+done
+
+existing_plugins="$(claude plugin list 2>/dev/null || true)"
+for plugin in "${PLUGINS[@]}"; do
+  if ! awk -v n="$plugin" 'NF==2 && $2==n {found=1} END {exit !found}' <<<"$existing_plugins"; then
+    claude plugin install "$plugin" || true
+  fi
+done
