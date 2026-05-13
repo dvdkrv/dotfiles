@@ -1,0 +1,2 @@
+Host *
+  SendEnv LC_TERMINAL_THEME
