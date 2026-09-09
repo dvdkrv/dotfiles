@@ -1,5 +1,7 @@
 # Pi messaging — verification and review
 
+The initial verification sections below describe the original implementation at `dec259c`; dated follow-ups record later activation and changes.
+
 Implementation branch: `feat/pi-messaging`, based on `186cf04` (the reviewed design and explicit implementation approval). No push, merge, global Pi activation, or persistent service installation was performed. Core commits are present through `181eeb2`, followed by the final signed integration/review commit. The first final-commit attempt was blocked by a missing SSH-agent socket. After agent forwarding was restored, `ssh-add -l` confirmed access, all 121 tests and repository checks were rerun successfully, and the configured `dd-gitsign` signer was used without bypassing signing.
 
 ## Verification
@@ -32,6 +34,29 @@ A separate read-only Gemini 3 Flash review inspected the source, tests, and plan
 - **Clarified human resend:** a new human composition intentionally gets a new identity. Uncertain-publication errors now tell the human to inspect first rather than implying a safe retry after rejoining.
 
 Additional regressions fixed stale selected-group replacement, late dialog/status operations after leaving, blank-name behavior, malformed array-backed ledgers, and carriage-return/tab rendering.
+
+## 2026-09-09 usability follow-ups
+
+The hands-on setup subsequently registered the feature-worktree package in normal Pi settings and started the broker on a separate detached tmux server. That test service remains running; it is not reboot-persistent autostart. Existing sessions must reload and explicitly join themselves. The worktree must remain present while registration and launcher paths reference it.
+
+Command autocomplete shipped in `42e2586`, with 125 aggregate tests. The approved role-naming follow-up now removes manual name entry, defaults to the Pi session ID, shows role/session labels, exposes session IDs through discovery, and permits self-only rename. Fresh routing identities and all admission semantics remain unchanged. Transient context guidance adds neither a model wakeup nor broker polling.
+
+Fresh verification for role naming:
+
+- **133 aggregate tests**, including **51 messaging tests**, zero failures/skips; typecheck, ShellCheck, rendered configuration/Chezmoi checks, headless Neovim, and diff whitespace checks passed.
+- All 51 messaging tests also passed on Node **22.19.0** and **24.20.0**; primary runtime **26.5.0**. Actual Pi tool-schema validation accepts the 64-code-point Unicode name boundary.
+- Real broker coverage verifies role-name publication, immutable historical sender names, unchanged queued recipients/counters, and fresh routing identity for the same session ID after rejoin. Unit tests cover invalid/targeted/concurrent/late rename, absent naming dialogs, session-title independence, numbered selector disambiguation, and transient/disabled/detached context.
+- Google Flash live SDK runs passed on Pi **0.82.0** (8 inference requests) and **0.84.1** (7 requests). Without user-supplied names or recipient IDs, the initiator discovered the other participant, and both chose `protocol-initiator` / `protocol-responder`. Exactly two admissions were spent; FOLLOWUP stayed queued. Joining made zero inference requests, and identity guidance was absent from persisted session history. Combined estimate for the two passing runs: **$0.00954**, gateway billing unverified. Preliminary diagnostic runs incurred additional usage.
+- The smoke cap is now 16 requests, retaining 512 output tokens/request, 20,000-byte contexts, 90 seconds, and a $0.50 estimated ceiling. Initial runs exposed a test-only assumption that every responder must list peers before renaming. Responders already know an incoming sender; the final test instead verifies real recipient discovery without providing an address and still requires exactly one role rename by each agent. Naming can occur after a send during the same normal run; historical sender-name snapshots are intentionally unchanged.
+
+A separate read-only Gemini 3 Flash review (approximately **$0.02708** at published rates) was checked against source and tests:
+
+- **Rejected unnamed-heartbeat overwrite concern:** an unnamed heartbeat changes only `lastSeen`. A CAS revision conflict rereads current state before reapplying that mutation, preserving a committed role name. Added a real-broker delayed-snapshot regression that forces the revision-conflict path and verifies both ledger and local name.
+- **Rejected claimed validation bypass:** policy validation must succeed before the backend's awaited change returns; invalid strings never reach the local cache update. The new tool also validates/normalizes before calling heartbeat. The broker regression verifies rejected terminal-control names leave both local and remote names intact.
+- **Rejected UI inconsistency:** the join notification, lists, and footer use the same `peerLabel` formatter. The confirmation deliberately shows the full session ID.
+- **Kept shared action schema:** the existing Google-compatible enum/optional-fields layout remains; runtime validation explicitly rejects targeting/extra fields for rename, covered by tests. No administrative capability was added.
+
+No source change was needed for those review claims. No user sessions were reloaded/joined, and the hands-on broker was not restarted or stopped by these tests. No merge or push was performed.
 
 ## Remaining limits
 

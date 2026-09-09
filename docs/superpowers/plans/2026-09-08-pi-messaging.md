@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Messaging only; no task launching, project tracking, vault integration, or automatic membership restoration.
-- Human-only TUI join/arm/pause/recovery; tool has only peers/status/send.
+- Human-only TUI join/arm/pause/recovery; initial tool had only peers/status/send. The approved [2026-09-09 follow-up](2026-09-09-pi-messaging-role-names.md) adds self-only role naming.
 - Default 12 admissions per group round; explicit human choice 1–100; receipts/retries/restarts never grant credits.
 - At most one unresolved handoff per recipient; never replay an attempted message, even in a new round.
 - Pause cannot retract an already admitted Pi message. Generation checks precede and follow asynchronous reservations.

@@ -25,9 +25,9 @@ pi -e ./pi-messaging/extensions/messaging.ts
 In each session:
 
 1. `/messages join example` — create/select the group and confirm participation.
-2. Choose different display names. A blank name follows the Pi session name.
+2. No naming dialog: each participant starts with its **Pi session ID**. During normal work, the agent can discover peers and choose a concise name describing its assigned role.
 3. In either session, `/messages arm 12` — confirm one shared automatic-work allowance.
-4. Ask an agent to use `peer_message` to list peers and send to the other session, or use `/messages send` yourself.
+4. Ask an agent to contact the other participant; it can discover the recipient itself. Alternatively, use `/messages send`.
 
 Peers can wake idle sessions and steer busy sessions. Joining does not arm a group. New groups are paused.
 
@@ -47,7 +47,15 @@ Peers can wake idle sessions and steer busy sessions. Joining does not arm a gro
 
 Type `/messages ` and press **Tab** to see subcommands with descriptions and argument hints. `/messages jo` completes to `join`; `/messages arm ` offers common allowances (1, 2, and default 12), while any integer 1–100 can still be typed. `join` completes group names learned from normal `/messages` command reads, including newly created groups. That cache is cleared on reload/backend replacement; an empty cache does not prevent entering a group name or pressing Enter to open the picker. Completion itself never connects to the broker or changes state.
 
-All controls require TUI mode. The agent tool has only **peers**, **status**, and **send**; it cannot join, arm, grant credits, or inspect pending bodies. Status output is metadata-only and paginated at 20 records.
+All controls require TUI mode. The agent tool has **peers**, **status**, **send**, and **rename** (self only); it cannot join, arm, grant credits, or inspect pending bodies. Status output is metadata-only and paginated at 20 records.
+
+### Session identity and role names
+
+Peer lists show names such as `test-reviewer · session a31b7c92`. The initial display name is the full Pi session ID; compact views shorten it. Discovery returns the full `sessionId`, `displayName`, and opaque routing `id` for each active participant. Names and session IDs are **not** routing aliases: agents send using `toPeerId` from discovery or the incoming message's sender ID. Numbered human choices remain distinct even when labels or session-ID prefixes match.
+
+An already joined agent receives transient identity guidance during ordinary model requests, including ongoing work. It can call `peer_message` with `action: "rename"` and a `displayName` describing its existing role. Names are self-reported metadata, not new task assignments or authority. With no known assignment, the session-ID default remains appropriate. Naming is model-driven, not guaranteed to precede the first message; a reply can use a known sender without another discovery lookup.
+
+There is no naming-only model call, automatic greeting, broker polling from the context hook, or sharing of other conversations. Normal discovery/rename tool calls use ordinary agent-turn tokens. Renaming leaves queued messages and routing IDs unchanged; session-title changes do not overwrite the role. Rejoining starts a fresh routing identity and the session-ID default, never restores an old inbox.
 
 ## Safety and recovery
 
@@ -101,4 +109,4 @@ NATS_SERVER=/path/to/nats-server \
 npm run test:live --workspace pi-messaging
 ```
 
-This creates two real SDK sessions with scripted human dialogs, only `peer_message` enabled, allowance 2, at most 8 inference requests, 512 output tokens/request, a context-size cap, 90-second timeout, and a $0.50 **estimated** upper bound using known model rates. It checks PING/PONG delivery and a third message left queued. It is not a real-terminal UI automation test. Cheap Anthropic/Google models with known pricing are accepted; unpriced gateway Gemini 3 Flash uses Google's published standard text rates, explicitly labeled as an estimate rather than verified gateway billing. Set `PI_MESSAGING_PI_SDK` to an installed SDK entry path to test another Pi version.
+This creates two real SDK sessions with scripted human dialogs, only `peer_message` enabled, allowance 2, at most 16 inference requests, 512 output tokens/request, a context-size cap, 90-second timeout, and a $0.50 **estimated** upper bound using known model rates. It checks session-ID defaults without name input or inference at join, recipient discovery without a human-provided address, self-selected initiator/responder role names, transient rather than persisted identity guidance, PING/PONG delivery, and a third message left queued. It is not a real-terminal UI automation test. Cheap Anthropic/Google models with known pricing are accepted; unpriced gateway Gemini 3 Flash uses Google's published standard text rates, explicitly labeled as an estimate rather than verified gateway billing. Set `PI_MESSAGING_PI_SDK` to an installed SDK entry path to test another Pi version.

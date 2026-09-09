@@ -11,7 +11,9 @@ Scope: messaging only. Project tracking, worktree lifecycle changes, knowledge s
 3. **Conservative uncertain delivery.** At most one unresolved handoff per recipient. An admitted message is never automatically replayed or refunded, even when it might not have reached Pi. A human can inspect and dismiss an uncertain attempt to unblock the recipient. A receipt proves observation, not task completion.
 4. **Fresh membership after context changes.** Reload, restart, new/resumed/forked sessions, and tree navigation detach participation. Explicit rejoining creates a fresh identity. Old inboxes remain inspectable, not redirected.
 5. **Honest pause semantics.** Pause/leave prevent new admissions, but cannot recall messages already handed to Pi. These may still appear afterward.
-6. **Human control remains separate.** `/messages` provides join, leave, arm, pause, send, status, inbox, revoke, and prune. The model tool `peer_message` has only peers, status, and send; it cannot inspect pending bodies or grant allowance. Peer text is not human authorization.
+6. **Human control remains separate.** `/messages` provides join, leave, arm, pause, send, status, inbox, revoke, and prune. The model tool `peer_message` has peers, status, send, and self-only rename; it cannot inspect pending bodies or grant allowance. Peer text is not human authorization.
+
+The approved [session identity and role-naming follow-up](2026-09-09-pi-messaging-role-names-design.md) removes the join name prompt. Pi session ID is the default and stays visible beside a role-bearing name; agents can discover peers and rename only themselves during ordinary work. Names and session IDs are not routing aliases. Transient identity guidance triggers no inference or broker polling on its own, and renaming never redirects queued messages.
 
 This bounds messaging-driven admissions, not all work within an agent run or another extension's loop. It is not a sandbox against programs running as the same OS user.
 

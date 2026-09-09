@@ -36,6 +36,61 @@ test('real queue: opt-in, shared allowance, exact envelope, idempotency and term
   assert.equal((await a.listMessages(g)).length, 3);
 });
 
+test('role tool publishes self-name without rerouting queued work or inheriting an old session inbox', async t => {
+  const f = await fixture(t); if (!f) return;
+  const { registerMessaging } = await createJiti(import.meta.url).import('../extensions/messaging.ts');
+  const commands = new Map(); const tools = new Map(); const events = new Map(); const delivered = [];
+  const ctx = { mode: 'tui', isIdle: () => true,
+    sessionManager: { getSessionFile: () => '/tmp/naming-session.jsonl', getSessionId: () => 'a' },
+    ui: { confirm: async () => true, input: async () => { throw Error('No name input'); }, notify: () => {}, setStatus: () => {} } };
+  registerMessaging({ on: (name, fn) => events.set(name, fn), registerCommand: (name, command) => commands.set(name, command),
+    registerTool: tool => tools.set(tool.name, tool), registerMessageRenderer: () => {}, getActiveTools: () => ['peer_message'],
+    sendMessage: (...args) => delivered.push(args) }, async () => f.a);
+  t.after(() => events.get('session_shutdown')({}, ctx));
+  await f.a.leave(); await commands.get('messages').handler('join testing', ctx);
+  const oldId = f.a.peer.id;
+  const before = await f.a.send({ toPeerId: f.b.peer.id, text: 'before rename' }, 'before');
+  const incoming = await f.b.send({ toPeerId: oldId, text: 'old inbox' }, 'incoming');
+  await tools.get('peer_message').execute('role', { action: 'rename', displayName: 'test-reviewer' }, undefined, undefined, ctx);
+  const discovered = (await f.b.peers(f.g)).find(p => p.id === oldId);
+  assert.equal(discovered.sessionId, 'a'); assert.equal(discovered.displayName, 'test-reviewer');
+  assert.equal(f.a.peer.displayName, 'test-reviewer');
+  const after = await f.a.send({ toPeerId: f.b.peer.id, text: 'after rename' }, 'after');
+  assert.equal((await f.b.readBody(f.g, before.id)).senderName, 'a');
+  assert.equal((await f.b.readBody(f.g, after.id)).senderName, 'test-reviewer');
+  assert.equal(after.senderPeerId, before.senderPeerId);
+  await commands.get('messages').handler('leave', ctx);
+  await commands.get('messages').handler('join testing', ctx);
+  assert.notEqual(f.a.peer.id, oldId); assert.equal(f.a.peer.sessionId, 'a'); assert.equal(f.a.peer.displayName, 'a');
+  const oldInbox = (await f.a.listMessages(f.g)).find(m => m.id === incoming.id);
+  assert.equal(oldInbox.recipientPeerId, oldId); assert.equal(oldInbox.state, 'queued');
+  const summary = await f.a.getGroupSummary(f.g); assert.equal(summary.limit, 0); assert.equal(summary.used, 0);
+  assert.equal(delivered.length, 0);
+});
+
+test('an overlapping unnamed heartbeat rebases rather than reverting a role rename', async t => {
+  const f = await fixture(t); if (!f) return;
+  let release; let started; const ready = new Promise(r => { started = r; });
+  const barrier = new Promise(r => { release = r; }); t.after(() => release());
+  const snapshot = f.a.snapshot.bind(f.a); let reads = 0;
+  f.a.snapshot = async () => {
+    const result = await snapshot();
+    if (++reads === 1) { started(); await barrier; }
+    return result;
+  };
+  const pending = f.a.heartbeat(); await ready;
+  await f.a.heartbeat('test-reviewer');
+  // Advance lastSeen past its previous millisecond, ensuring the stale write takes the CAS path.
+  await new Promise(resolve => setTimeout(resolve, 2));
+  release(); await pending;
+  assert.ok(reads >= 3, 'The stale heartbeat must reread after a revision conflict');
+  assert.equal(f.a.peer.displayName, 'test-reviewer');
+  assert.equal((await f.b.peers(f.g)).find(p => p.id === f.a.peer.id).displayName, 'test-reviewer');
+  await assert.rejects(f.a.heartbeat('\x1b[31minvalid'), /display name/i);
+  assert.equal(f.a.peer.displayName, 'test-reviewer');
+  assert.equal((await f.b.peers(f.g)).find(p => p.id === f.a.peer.id).displayName, 'test-reviewer');
+});
+
 test('concurrent sends preserve one identity and metadata reads cannot change allowance', async t => {
   const f = await fixture(t); if (!f) return;
   const { a, b, g } = f;

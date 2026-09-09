@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type { ExtensionCommandContext } from '@earendil-works/pi-coding-agent';
 import type { GroupRef, MessagingBackend } from './contracts.ts';
 import { fail, safeText } from './policy.ts';
+import { peerLabel } from './identity.ts';
 
 export interface HumanControls {
   backend: MessagingBackend;
   selected?: GroupRef;
   select(ref: GroupRef): void;
   groupsListed(groups: readonly GroupRef[]): void;
-  joined(ref: GroupRef, followSessionName: boolean): void;
+  joined(ref: GroupRef): void;
   leave(): Promise<void>;
   guard(): void;
 }
@@ -38,7 +39,7 @@ export async function handleMessages(args: string, ctx: ExtensionCommandContext,
     const peer = b.peer;
     if (!peer || peer.groupId !== group.id) fail('participation', 'Join this group before sending');
     const peers = (await b.peers(group)).filter(p => p.active && p.id !== peer.id);
-    const labels = peers.map(p => `${p.displayName} — ${p.id}${Date.now() - p.lastSeen > 30000 ? ' (stale)' : ''}`);
+    const labels = peers.map((p, i) => `${i + 1}. ${peerLabel(p)}${Date.now() - p.lastSeen > 30000 ? ' (stale)' : ''}`);
     const choice = await ask(ctx.ui.select('Send to peer', labels));
     if (!choice) return;
     const text = await ask(ctx.ui.editor('Peer message (submit to queue; Escape cancels)', initial));
@@ -52,18 +53,15 @@ export async function handleMessages(args: string, ctx: ExtensionCommandContext,
     if (b.peer) fail('participation', 'Leave the current group first');
     if (!ctx.sessionManager.getSessionFile()) fail('participation', 'Joining requires a saved Pi session, not ephemeral mode');
     const summary = await b.getGroupSummary(group); if (!summary) fail('missing', 'Group no longer exists');
-    const fallback = [...safeText(ctx.sessionManager.getSessionName() || ctx.sessionManager.getSessionId().slice(0, 8)).replace(/[\r\n\t]/g, ' ')].slice(0, 64).join('');
-    const entered = await ask(ctx.ui.input('Peer display name (blank follows session name)', fallback));
-    if (entered === undefined) return;
-    const displayName = entered.trim() || fallback;
-    if (!await ask(ctx.ui.confirm('Join messaging group?', `${group.label}: ${summary.mode}, ${summary.remaining} admissions remaining. When armed, peers may wake this session or steer it while busy. Joining does not grant allowance.`))) return;
-    await b.join(group, { sessionId: ctx.sessionManager.getSessionId(), displayName });
-    controls.joined(group, !entered.trim()); ctx.ui.notify(`Joined ${group.label}. Use /messages arm to explicitly grant automatic work.`, 'info');
+    const sessionId = ctx.sessionManager.getSessionId();
+    if (!await ask(ctx.ui.confirm('Join messaging group?', `${group.label}: ${summary.mode}, ${summary.remaining} admissions remaining. Default name: ${safeText(sessionId)}; the agent can choose its role name during normal work. When armed, peers may wake this session or steer it while busy. Joining does not grant allowance.`))) return;
+    await b.join(group, { sessionId, displayName: sessionId });
+    controls.joined(group); ctx.ui.notify(`Joined ${group.label} as ${peerLabel({ sessionId, displayName: sessionId })}. Use /messages arm to explicitly grant automatic work.`, 'info');
   } else if (command === 'arm') {
     const limit = argument === undefined ? 12 : Number(argument);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail('validation', 'Allowance must be an integer from 1 to 100');
     const summary = await b.getGroupSummary(group); if (!summary) fail('missing', 'Group no longer exists');
-    const names = (await b.peers(group)).filter(p => p.active).map(p => p.displayName).join(', ') || '(no active peers)';
+    const names = (await b.peers(group)).filter(p => p.active).map(peerLabel).join(', ') || '(no active peers)';
     if (await ask(ctx.ui.confirm('Arm a NEW messaging round?', `${group.label}: ${limit} shared admissions, replacing unused allowance. ${summary.pendingCount} pending/uncertain messages. Peers: ${names}. Automatic model turns spend tokens. Old attempts are never replayed.`))) await b.arm(group, limit);
   } else if (command === 'pause') {
     await b.pause(group); ctx.ui.notify('Paused new admissions. Already admitted Pi messages may still appear.', 'info');
@@ -95,12 +93,12 @@ export async function handleMessages(args: string, ctx: ExtensionCommandContext,
       const removed = await b.prune(group, true); ctx.ui.notify(`Pruned ${removed.length} terminal messages.`, 'info');
     }
   } else if (command === 'revoke') {
-    const peers = (await b.peers(group)).filter(p => p.active); const labels = peers.map(p => `${p.displayName} — ${p.id}`);
+    const peers = (await b.peers(group)).filter(p => p.active); const labels = peers.map((p, i) => `${i + 1}. ${peerLabel(p)}`);
     const choice = await ask(ctx.ui.select('Revoke participation', labels));
     if (choice && await ask(ctx.ui.confirm('Revoke this peer?', 'Stops future admissions; does not kill a process or recall prior messages.'))) await b.revoke(group, peers[labels.indexOf(choice)].id);
   } else if (command === 'status') {
     const summary = await b.getGroupSummary(group);
     const peers = await b.peers(group);
-    ctx.ui.notify(safeText(`${group.label}: ${summary?.mode ?? 'missing'}, ${summary?.remaining ?? 0} admissions remaining; ${summary?.pendingCount ?? 0} pending/uncertain.\n${peers.map(p => `${p.displayName}: ${p.active ? Date.now() - p.lastSeen <= 30000 ? 'online' : 'stale' : 'left'} (${p.id})`).join('\n')}`), 'info');
+    ctx.ui.notify(safeText(`${group.label}: ${summary?.mode ?? 'missing'}, ${summary?.remaining ?? 0} admissions remaining; ${summary?.pendingCount ?? 0} pending/uncertain.\n${peers.map((p, i) => `${i + 1}. ${peerLabel(p)}: ${p.active ? Date.now() - p.lastSeen <= 30000 ? 'online' : 'stale' : 'left'}`).join('\n')}`), 'info');
   } else fail('validation', 'Unknown /messages command. Use status, join, leave, arm, pause, send, inbox, prune, or revoke.');
 }

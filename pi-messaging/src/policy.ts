@@ -6,7 +6,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const control = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 export function fail(code: string, message: string): never { throw new MessagingError(code, message); }
 export function safeText(text: string): string { return text.replace(control, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`); }
-function name(value: string): string {
+export function validateDisplayName(value: string): string {
   if (typeof value !== 'string' || !value.trim() || [...value].length > 64 || safeText(value) !== value || /[\n\r\t]/.test(value)) fail('validation', 'Invalid display name');
   return value.trim();
 }
@@ -30,7 +30,7 @@ export function validateLedger(value: unknown, authorityId: string): asserts val
   }
   for (const [id, p] of Object.entries(s.peers)) {
     if (!uuid.test(id) || p.id !== id || !Object.hasOwn(s.groups, p.groupId) || typeof p.active !== 'boolean' || typeof p.sessionId !== 'string' || !Number.isFinite(p.lastSeen)) fail('corrupt', 'Invalid peer ledger');
-    name(p.displayName);
+    validateDisplayName(p.displayName);
   }
   for (const [id, m] of Object.entries(s.messages)) {
     if (!uuid.test(id) || m.id !== id || !Object.hasOwn(s.groups, m.groupId) || !Object.hasOwn(s.peers, m.senderPeerId) || !Object.hasOwn(s.peers, m.recipientPeerId) || s.peers[m.senderPeerId].groupId !== m.groupId || s.peers[m.recipientPeerId].groupId !== m.groupId || !['queued', 'attempted', 'observed', 'canceled', 'dismissed'].includes(m.state) || !Number.isSafeInteger(m.sequence) || m.sequence < 1 || m.sequence > s.sequence || typeof m.requestKey !== 'string' || !/^[0-9a-f]{64}$/.test(m.hash) || !Number.isFinite(m.createdAt)) fail('corrupt', 'Invalid message ledger');
@@ -61,11 +61,11 @@ export function joinPeer(s: Ledger, ref: GroupRef, info: { sessionId: string; di
   const group = groupOf(s, ref);
   if (Object.keys(s.peers).length >= 512 || Object.values(s.peers).filter(p => p.groupId === group.id && p.active).length >= 16) fail('full', 'Peer store full; leave/revoke and prune old peers');
   if (!info.sessionId || info.sessionId.length > 256) fail('validation', 'Invalid session ID');
-  const peer: Peer = { id: randomUUID(), groupId: group.id, sessionId: info.sessionId, displayName: name(info.displayName), active: true, lastSeen: Date.now() };
+  const peer: Peer = { id: randomUUID(), groupId: group.id, sessionId: info.sessionId, displayName: validateDisplayName(info.displayName), active: true, lastSeen: Date.now() };
   s.peers[peer.id] = peer; return peer;
 }
 export function leavePeer(s: Ledger, id: string): void { if (Object.hasOwn(s.peers, id)) s.peers[id].active = false; }
-export function heartbeat(s: Ledger, id: string, displayName?: string): void { const peer = activePeer(s, id); peer.lastSeen = Date.now(); if (displayName !== undefined) peer.displayName = name(displayName); }
+export function heartbeat(s: Ledger, id: string, displayName?: string): void { const peer = activePeer(s, id); peer.lastSeen = Date.now(); if (displayName !== undefined) peer.displayName = validateDisplayName(displayName); }
 export function arm(s: Ledger, ref: GroupRef, limit: number): void {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail('validation', 'Allowance must be an integer from 1 to 100');
   const g = groupOf(s, ref); g.round++; g.limit = limit; g.used = 0; g.mode = 'armed';

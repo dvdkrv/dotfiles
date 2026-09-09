@@ -11,7 +11,7 @@ function fixture(t) {
   const state = p.newLedger(randomUUID()); const group = p.createGroup(state, 'review');
   const other = p.joinPeer(state, group, { sessionId: 'other', displayName: 'Other' });
   const events = new Map(); const commands = new Map(); const tools = new Map(); const renderers = new Map();
-  const bodies = new Map();
+  const bodies = new Map(); const activeTools = ['peer_message'];
   const delivered = []; const notices = []; const statuses = []; const confirmations = []; const connectCalls = [];
   let peer; let closed = false;
   const backend = {
@@ -32,14 +32,14 @@ function fixture(t) {
   const pi = {
     on: (name, handler) => events.set(name, handler), registerCommand: (name, command) => commands.set(name, command),
     registerTool: tool => tools.set(tool.name, tool), registerMessageRenderer: (name, renderer) => renderers.set(name, renderer),
-    sendMessage: (...args) => delivered.push(args), getSessionName: () => 'Local',
+    sendMessage: (...args) => delivered.push(args), getSessionName: () => 'Local', getActiveTools: () => activeTools,
   };
   const ctx = { mode: 'tui', isIdle: () => true, sessionManager: { getSessionFile: () => '/tmp/session.jsonl', getSessionId: () => 'local', getSessionName: () => 'Local' },
     ui: { notify: (...args) => notices.push(args), setStatus: (...args) => statuses.push(args),
       confirm: async (...args) => { confirmations.push(args); return true; }, input: async () => 'Local', select: async (_, choices) => choices[0], editor: async () => 'human text' } };
   registerMessaging(pi, async () => { connectCalls.push(1); return backend; });
   t.after(async () => { await events.get('session_shutdown')?.({}, ctx); });
-  return { state, group, other, backend, events, commands, tools, renderers, delivered, notices, statuses, confirmations, connectCalls, ctx };
+  return { state, group, other, backend, events, commands, tools, renderers, delivered, notices, statuses, confirmations, connectCalls, activeTools, ctx };
 }
 async function execute(f, action, fields = {}) { return f.tools.get('peer_message').execute(randomUUID(), { action, ...fields }, undefined, undefined, f.ctx); }
 
@@ -145,17 +145,130 @@ test('leave during a status read returns a participation error rather than follo
   await assert.rejects(pending, /participation|session changed/i);
 });
 
-test('blank display name follows session renames while explicit nicknames stay unchanged', async t => {
-  const f = fixture(t); f.ctx.ui.input = async () => '';
+test('session-ID defaults require no naming dialog and are independent of session titles', async t => {
+  const f = fixture(t); const sessionId = 'a31b7c92-1111-4444-8888-123456789abc';
+  f.ctx.sessionManager.getSessionId = () => sessionId;
+  f.ctx.ui.input = async () => { throw Error('No name input expected'); };
   await f.commands.get('messages').handler('join review', f.ctx);
-  assert.equal(f.backend.peer.displayName, 'Local');
-  await f.events.get('session_info_changed')({ name: 'Renamed' }, f.ctx);
-  assert.equal(f.backend.peer.displayName, 'Renamed');
+  assert.equal(f.backend.peer.displayName, sessionId);
+  assert.equal(f.backend.peer.sessionId, sessionId);
+  assert.ok(f.confirmations.some(([, text]) => text.includes(sessionId)));
+  await f.events.get('session_info_changed')?.({ name: 'Renamed title' }, f.ctx);
+  assert.equal(f.backend.peer.displayName, sessionId);
+  assert.equal(f.state.groups[f.group.id].limit, 0); assert.equal(f.delivered.length, 0);
+});
+
+test('peer selection shows role and session ID without conflating identical labels', async t => {
+  const f = fixture(t);
+  const sessionId = 'f82e409a-1111-4444-8888-123456789abc';
+  f.other.displayName = 'test-reviewer'; f.other.sessionId = sessionId;
+  const second = p.joinPeer(f.state, f.group, { sessionId, displayName: 'test-reviewer' });
+  await f.commands.get('messages').handler('join review', f.ctx);
+  f.ctx.ui.select = async (title, choices) => {
+    assert.equal(title, 'Send to peer'); assert.equal(choices.length, 2);
+    assert.ok(choices.every(c => c.includes('test-reviewer') && c.includes('f82e409a')));
+    assert.notEqual(choices[0], choices[1]); return choices[1];
+  };
+  await f.commands.get('messages').handler('send', f.ctx);
+  assert.equal(Object.values(f.state.messages)[0].recipientPeerId, second.id);
+});
+
+test('role rename changes only self while discovery retains session and routing IDs', async t => {
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  const before = { ...f.backend.peer }; const groupBefore = { ...f.state.groups[f.group.id] };
+  const queued = p.prepareMessage(f.state, f.other.id, { toPeerId: before.id, text: 'PRIVATE_BODY' }, 'incoming');
+  const result = JSON.parse((await execute(f, 'rename', { displayName: '  test-reviewer  ' })).content[0].text);
+  assert.deepEqual(result, { id: before.id, sessionId: 'local', displayName: 'test-reviewer' });
+  assert.equal(f.backend.peer.displayName, 'test-reviewer'); assert.equal(f.other.displayName, 'Other');
+  await f.events.get('session_info_changed')?.({ name: 'Unrelated title' }, f.ctx);
+  assert.equal(f.backend.peer.displayName, 'test-reviewer');
+  assert.equal(queued.recipientPeerId, before.id); assert.equal(queued.state, 'queued');
+  assert.deepEqual(f.state.groups[f.group.id], groupBefore);
+  const discovery = JSON.parse((await execute(f, 'peers')).content[0].text);
+  assert.equal(discovery.selfId, before.id); assert.equal(discovery.selfSessionId, 'local');
+  assert.deepEqual(discovery.peers.find(p => p.id === before.id), { id: before.id, sessionId: 'local', displayName: 'test-reviewer', presence: 'online' });
+  assert.equal(discovery.peers.find(p => p.id === f.other.id).sessionId, 'other');
+  assert.equal(JSON.stringify(discovery).includes('PRIVATE_BODY'), false); assert.equal(f.delivered.length, 0);
   await f.commands.get('messages').handler('leave', f.ctx);
-  f.ctx.ui.input = async () => 'Explicit';
   await f.commands.get('messages').handler('join review', f.ctx);
-  await f.events.get('session_info_changed')({ name: 'Another name' }, f.ctx);
-  assert.equal(f.backend.peer.displayName, 'Explicit');
+  assert.notEqual(f.backend.peer.id, before.id); assert.equal(f.backend.peer.sessionId, before.sessionId);
+  assert.equal(f.backend.peer.displayName, 'local'); assert.equal(queued.recipientPeerId, before.id);
+});
+
+test('rename rejects administrative targets, invalid names, and unjoined or non-TUI callers', async t => {
+  const f = fixture(t);
+  await assert.rejects(execute(f, 'rename', { displayName: 'reviewer' }), /join/i);
+  assert.equal(f.connectCalls.length, 0);
+  await f.commands.get('messages').handler('join review', f.ctx);
+  for (const displayName of [undefined, 123, '', ' ', 'x'.repeat(65), 'review\nlead', '\x1b[31mreview', '\u202elead']) {
+    await assert.rejects(execute(f, 'rename', { displayName }), /display.?name|rename/i);
+  }
+  for (const fields of [{ toPeerId: f.other.id }, { text: 'unused' }, { inReplyTo: randomUUID() }, { beforeSequence: 1 }]) {
+    await assert.rejects(execute(f, 'rename', { displayName: 'reviewer', ...fields }), /rename|only/i);
+  }
+  for (const mode of ['rpc', 'json', 'print']) {
+    await assert.rejects(f.tools.get('peer_message').execute('rename', { action: 'rename', displayName: 'reviewer' }, undefined, undefined, { ...f.ctx, mode }), /TUI/i);
+  }
+  assert.equal(f.backend.peer.displayName, 'local'); assert.equal(f.other.displayName, 'Other');
+  await execute(f, 'rename', { displayName: '🧪'.repeat(64) });
+  assert.equal(f.backend.peer.displayName, '🧪'.repeat(64));
+});
+
+test('concurrent self-renames are rejected instead of racing the local name cache', async t => {
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  assert.ok(f.tools.get('peer_message').parameters.properties.action.enum.includes('rename'));
+  let release; let started; const ready = new Promise(r => { started = r; });
+  const barrier = new Promise(r => { release = r; }); const self = f.backend.peer;
+  f.backend.heartbeat = async name => { started(); await barrier; p.heartbeat(f.state, self.id, name); };
+  const first = execute(f, 'rename', { displayName: 'first-reviewer' }); await ready;
+  await assert.rejects(execute(f, 'rename', { displayName: 'second-reviewer' }), /busy|progress/i);
+  release(); await first; assert.equal(f.backend.peer.displayName, 'first-reviewer');
+});
+
+test('late rename acknowledgment cannot follow replacement membership or block its naming', async t => {
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  assert.ok(f.tools.get('peer_message').parameters.properties.action.enum.includes('rename'));
+  let release; let started; const ready = new Promise(r => { started = r; });
+  const barrier = new Promise(r => { release = r; }); const oldId = f.backend.peer.id;
+  const heartbeat = f.backend.heartbeat;
+  f.backend.heartbeat = async name => { await heartbeat(name); started(); await barrier; };
+  const pending = execute(f, 'rename', { displayName: 'old-reviewer' }); await ready;
+  await f.commands.get('messages').handler('leave', f.ctx);
+  await f.commands.get('messages').handler('join review', f.ctx);
+  f.backend.heartbeat = heartbeat;
+  await execute(f, 'rename', { displayName: 'new-reviewer' });
+  release(); await assert.rejects(pending, /participation|session changed/i);
+  assert.notEqual(f.backend.peer.id, oldId); assert.equal(f.backend.peer.displayName, 'new-reviewer');
+});
+
+test('identity guidance is transient, current, and inert outside explicit enabled participation', async t => {
+  const f = fixture(t); const context = f.events.get('context'); assert.equal(typeof context, 'function');
+  const original = [{ role: 'user', content: 'Review the tests', timestamp: 1 }];
+  assert.deepEqual(context({ messages: original }, f.ctx).messages, original);
+  assert.equal(f.connectCalls.length, 0);
+  await f.commands.get('messages').handler('join review', f.ctx);
+  f.backend.peers = async () => { throw Error('Context must not poll the broker'); };
+  f.backend.readBody = async () => { throw Error('Context must not read pending bodies'); };
+  p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'PRIVATE_BODY' }, 'pending');
+  const state = structuredClone(f.state);
+  const supplied = context({ messages: original }, f.ctx);
+  assert.equal(supplied.messages.length, 2); assert.equal(original.length, 1);
+  const identity = supplied.messages[1];
+  assert.equal(identity.role, 'custom'); assert.equal(identity.customType, 'pi-messaging.identity.v1'); assert.equal(identity.display, false);
+  assert.deepEqual(identity.details, { group: f.group, id: f.backend.peer.id, sessionId: 'local', displayName: 'local' });
+  assert.equal(JSON.stringify(supplied).includes('PRIVATE_BODY'), false);
+  assert.deepEqual(f.state, state); assert.equal(f.delivered.length, 0);
+  await execute(f, 'rename', { displayName: 'test-reviewer' });
+  const refreshed = context({ messages: supplied.messages }, f.ctx);
+  assert.equal(refreshed.messages.length, 2); assert.equal(refreshed.messages[1].details.displayName, 'test-reviewer');
+  f.activeTools.length = 0;
+  assert.deepEqual(context({ messages: refreshed.messages }, f.ctx).messages, original);
+  f.activeTools.push('peer_message');
+  for (const mode of ['rpc', 'json', 'print']) assert.deepEqual(context({ messages: refreshed.messages }, { ...f.ctx, mode }).messages, original);
+  await f.commands.get('messages').handler('leave', f.ctx);
+  assert.deepEqual(context({ messages: refreshed.messages }, f.ctx).messages, original);
+  await f.commands.get('messages').handler('join review', f.ctx); await f.backend.close();
+  assert.deepEqual(context({ messages: refreshed.messages }, f.ctx).messages, original);
 });
 
 test('human composition queues as the joined peer and inbox viewing/cancellation never enters model context', async t => {
@@ -190,9 +303,9 @@ test('human dismissal, revocation and pruning preserve spent allowance', async t
 
 test('a late join dialog cannot mutate participation after tree navigation', async t => {
   const f = fixture(t); let release; let begun; const started = new Promise(r => { begun = r; });
-  f.ctx.ui.input = async () => { begun(); return new Promise(r => { release = r; }); };
+  f.ctx.ui.confirm = async () => { begun(); return new Promise(r => { release = r; }); };
   const joining = f.commands.get('messages').handler('join review', f.ctx); await started;
-  await f.events.get('session_before_tree')({}, f.ctx); release('Too late');
+  await f.events.get('session_before_tree')({}, f.ctx); release(true);
   await assert.rejects(joining, /session change/i);
   assert.equal(f.backend.peer, undefined); assert.equal(Object.keys(f.state.peers).length, 1);
 });
