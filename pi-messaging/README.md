@@ -45,6 +45,8 @@ Peers can wake idle sessions and steer busy sessions. Joining does not arm a gro
 | `revoke` | Disable an old participation; does not kill its process |
 | `prune` | Preview/remove eligible terminal history and unused inactive peers/groups |
 
+Type `/messages ` and press **Tab** to see subcommands with descriptions and argument hints. `/messages jo` completes to `join`; `/messages arm ` offers common allowances (1, 2, and default 12), while any integer 1–100 can still be typed. `join` completes group names learned from normal `/messages` command reads, including newly created groups. That cache is cleared on reload/backend replacement; an empty cache does not prevent entering a group name or pressing Enter to open the picker. Completion itself never connects to the broker or changes state.
+
 All controls require TUI mode. The agent tool has only **peers**, **status**, and **send**; it cannot join, arm, grant credits, or inspect pending bodies. Status output is metadata-only and paginated at 20 records.
 
 ## Safety and recovery

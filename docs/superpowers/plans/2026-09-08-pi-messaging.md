@@ -123,3 +123,13 @@ Implementation and review are complete. See [verification/review notes](../revie
 - Baseline: repository aggregate `npm test` and `npm run typecheck` passed in `.worktrees/pi-messaging` before implementation.
 - nats-server 2.14.6 Linux amd64 archive checksum verified against official release SHA256SUMS: `61c3d55f69f61ec616b75782250936445f2819e9e5f2ae6159b10a31abd2200c`; binary is temporary, not globally installed.
 - User explicitly authorized autonomous implementation/testing after reviewing the five behavior priorities; no additional execution-choice prompt required.
+
+## Usability follow-up: command hints and autocomplete
+
+User request: the command should have hints/autocompletion. Use Pi's native `getArgumentCompletions`, not a custom editor. Show all existing subcommands with concise descriptions and `[group]` / `[1–100]` argument hints. Suggest cached group labels for `join` and common or explicitly typed valid allowances for `arm`. Completion is pure: no connection, broker reads, join, arm, or model calls while typing. Populate the group-label cache only from normal human command reads/selections, and discard it on shutdown/reload or backend replacement. Execution still requires the existing confirmations.
+
+- [x] Add failing extension/native-provider tests for subcommand replacement, argument hints, no-side-effect completion, group-cache updates, and lifecycle clearing.
+- [x] Add `src/completions.ts`, wire registration/cache callbacks through the existing UI, and run the focused tests green.
+- [x] Document Tab completion; run aggregate tests/typecheck and native-provider checks against installed Pi. Keep the active background broker and existing user sessions untouched; the user can `/reload` to load the change.
+
+Validation: the four new tests failed first because no completion callback was registered, then passed with the implementation. Aggregate suite: **125 tests**, including **43 messaging tests**, zero failures/skips; typecheck and `git diff --check` passed. Native command loading, suggestions, hints, and Tab replacement also passed under installed Pi **0.84.1**, with no broker connection or model calls. The owned background broker remains running; no sessions were reloaded or joined.

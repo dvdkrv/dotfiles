@@ -7,6 +7,7 @@ export interface HumanControls {
   backend: MessagingBackend;
   selected?: GroupRef;
   select(ref: GroupRef): void;
+  groupsListed(groups: readonly GroupRef[]): void;
   joined(ref: GroupRef, followSessionName: boolean): void;
   leave(): Promise<void>;
   guard(): void;
@@ -18,6 +19,7 @@ export async function handleMessages(args: string, ctx: ExtensionCommandContext,
   const ask = async <T>(value: Promise<T>): Promise<T> => { const result = await value; controls.guard(); return result; };
   async function selectGroup(create = false): Promise<GroupRef | undefined> {
     const groups = await b.listGroups();
+    controls.groupsListed(groups);
     if (command !== 'join' && controls.selected) {
       const selected = groups.find(g => g.id === controls.selected!.id && g.authorityId === controls.selected!.authorityId);
       if (!selected) fail('missing', 'Selected group no longer exists; explicitly select or join another group');

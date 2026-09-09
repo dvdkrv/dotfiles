@@ -8,6 +8,7 @@ import { connectBackend } from '../src/nats-backend.ts';
 import { fail, safeText } from '../src/policy.ts';
 import { CUSTOM_TYPE, MessagingRuntime } from '../src/runtime.ts';
 import { handleMessages } from '../src/ui.ts';
+import { completeMessages } from '../src/completions.ts';
 
 async function configuredBackend(): Promise<MessagingBackend> {
   let config;
@@ -20,6 +21,7 @@ async function configuredBackend(): Promise<MessagingBackend> {
 export function registerMessaging(pi: ExtensionAPI, factory: () => Promise<MessagingBackend> = configuredBackend): void {
   let backend: MessagingBackend | undefined;
   let selected: GroupRef | undefined;
+  let knownGroupLabels: string[] = [];
   let joined: GroupRef | undefined;
   let runtime: MessagingRuntime | undefined;
   let activeRun = false;
@@ -32,7 +34,7 @@ export function registerMessaging(pi: ExtensionAPI, factory: () => Promise<Messa
     try { if (current) await current.stop(); else await backend?.leave(); }
     finally { if (close) { const old = backend; backend = undefined; await old?.close(); } }
   }
-  const shutdown = async () => { epoch++; activeRun = false; await detach(true); };
+  const shutdown = async () => { epoch++; activeRun = false; knownGroupLabels = []; await detach(true); };
   pi.on('session_start', async () => { await shutdown(); selected = undefined; });
   pi.on('session_shutdown', shutdown);
   pi.on('session_before_tree', async (_event, ctx) => { epoch++; await detach(false); if (ctx.mode === 'tui') ctx.ui.notify('Messaging detached for tree navigation; explicitly rejoin afterward.', 'info'); });
@@ -48,7 +50,8 @@ export function registerMessaging(pi: ExtensionAPI, factory: () => Promise<Messa
   pi.on('message_end', async event => { await runtime?.receipt(event.message); });
 
   pi.registerCommand('messages', {
-    description: 'Human-controlled peer messaging: join, arm, pause, send, inbox, leave, prune, revoke',
+    description: 'Human-controlled peer messaging (Tab for subcommands and argument hints)',
+    getArgumentCompletions: prefix => completeMessages(prefix, knownGroupLabels),
     handler: async (args, ctx) => {
       tui(ctx);
       if (commandBusy) fail('busy', 'Another messaging dialog is open');
@@ -57,6 +60,7 @@ export function registerMessaging(pi: ExtensionAPI, factory: () => Promise<Messa
       const guard = () => { if (generation !== epoch) fail('participation', 'Messaging command canceled by session change'); };
       try {
         if (!backend || backend.closed) {
+          knownGroupLabels = [];
           await detach(true); guard();
           const connected = await factory();
           if (generation !== epoch) { await connected.close(); guard(); }
@@ -71,7 +75,8 @@ export function registerMessaging(pi: ExtensionAPI, factory: () => Promise<Messa
         } }) as MessagingBackend;
         await handleMessages(args, ctx, {
           backend: checked, selected, guard,
-          select: ref => { guard(); selected = ref; },
+          groupsListed: groups => { guard(); knownGroupLabels = groups.map(group => group.label); },
+          select: ref => { guard(); selected = ref; knownGroupLabels = [...new Set([...knownGroupLabels, ref.label])]; },
           leave: async () => { await detach(false); },
           joined: (ref, follow) => {
             guard(); selected = joined = ref; followSessionName = follow;

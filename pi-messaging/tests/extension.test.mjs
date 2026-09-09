@@ -5,6 +5,7 @@ const jiti = createJiti(import.meta.url);
 const { registerMessaging } = await jiti.import('../extensions/messaging.ts');
 const p = await jiti.import('../src/policy.ts');
 import { randomUUID } from 'node:crypto';
+import { CombinedAutocompleteProvider } from '@earendil-works/pi-tui';
 
 function fixture(t) {
   const state = p.newLedger(randomUUID()); const group = p.createGroup(state, 'review');
@@ -41,6 +42,60 @@ function fixture(t) {
   return { state, group, other, backend, events, commands, tools, renderers, delivered, notices, statuses, confirmations, connectCalls, ctx };
 }
 async function execute(f, action, fields = {}) { return f.tools.get('peer_message').execute(randomUUID(), { action, ...fields }, undefined, undefined, f.ctx); }
+
+test('native slash completion lists subcommands with hints and replaces the full argument prefix', async t => {
+  const f = fixture(t); const command = f.commands.get('messages');
+  assert.equal(typeof command.getArgumentCompletions, 'function');
+  const provider = new CombinedAutocompleteProvider([{ name: 'messages', ...command }], '/tmp');
+  const options = { signal: new AbortController().signal };
+  const menu = await provider.getSuggestions(['/messages '], 0, '/messages '.length, options);
+  assert.deepEqual(menu.items.map(i => i.value.trim()).sort(), ['arm', 'inbox', 'join', 'leave', 'pause', 'prune', 'revoke', 'send', 'status']);
+  assert.ok(menu.items.every(i => i.description));
+  assert.match(menu.items.find(i => i.value.trim() === 'join').label, /group/i);
+  assert.match(menu.items.find(i => i.value.trim() === 'arm').label, /1.*100/);
+  const typed = '/messages jo';
+  const suggestions = await provider.getSuggestions([typed], 0, typed.length, options);
+  assert.equal(suggestions.items.length, 1);
+  const completed = provider.applyCompletion([typed], 0, typed.length, suggestions.items[0], suggestions.prefix);
+  assert.deepEqual(completed.lines, ['/messages join ']);
+  assert.equal(f.connectCalls.length, 0); assert.equal(f.confirmations.length, 0); assert.equal(f.delivered.length, 0);
+});
+
+test('allowance completion supplies hints without arming and never suggests invalid arguments', async t => {
+  const f = fixture(t); const complete = f.commands.get('messages').getArgumentCompletions;
+  assert.equal(typeof complete, 'function');
+  const choices = complete('arm ');
+  assert.ok(choices.some(i => i.value === 'arm 2'));
+  assert.ok(choices.some(i => i.value === 'arm 12' && /default/i.test(i.description)));
+  assert.deepEqual(complete('arm 37').map(i => i.value), ['arm 37']);
+  for (const prefix of ['arm 0', 'arm 101', 'arm -1', 'arm 2 extra', 'pause extra', 'unknown']) assert.equal(complete(prefix), null);
+  const provider = new CombinedAutocompleteProvider([{ name: 'messages', ...f.commands.get('messages') }], '/tmp');
+  const typed = '/messages arm 2';
+  const suggestions = await provider.getSuggestions([typed], 0, typed.length, { signal: new AbortController().signal });
+  assert.deepEqual(provider.applyCompletion([typed], 0, typed.length, suggestions.items[0], suggestions.prefix).lines, ['/messages arm 2']);
+  assert.equal(f.state.groups[f.group.id].limit, 0); assert.equal(f.confirmations.length, 0); assert.equal(f.connectCalls.length, 0);
+});
+
+test('join completion uses groups learned by human commands without broker reads while typing', async t => {
+  const f = fixture(t); const complete = f.commands.get('messages').getArgumentCompletions;
+  assert.equal(typeof complete, 'function'); assert.equal(complete('join re'), null);
+  p.createGroup(f.state, 'release');
+  await f.commands.get('messages').handler('status', f.ctx);
+  f.backend.listGroups = async () => { throw Error('Completion must not read the broker'); };
+  assert.deepEqual(complete('join re').map(i => i.value), ['join release', 'join review']);
+  assert.equal(f.backend.peer, undefined); assert.equal(f.state.groups[f.group.id].limit, 0);
+  await f.events.get('session_shutdown')({}, f.ctx);
+  assert.equal(complete('join re'), null);
+});
+
+test('newly created groups become completable without retaining them across reload', async t => {
+  const f = fixture(t); const complete = f.commands.get('messages').getArgumentCompletions;
+  assert.equal(typeof complete, 'function');
+  await f.commands.get('messages').handler('join new-group', f.ctx);
+  assert.deepEqual(complete('join new').map(i => i.value), ['join new-group']);
+  await f.events.get('session_start')({}, f.ctx);
+  assert.equal(complete('join new'), null);
+});
 
 test('factory/session_start are inert and non-TUI controls fail before connection', async t => {
   const f = fixture(t); assert.equal(f.connectCalls.length, 0);
