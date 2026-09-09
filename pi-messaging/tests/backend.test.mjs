@@ -75,6 +75,17 @@ test('prune deletes only terminal inactive-sender records; pending and counters 
   assert.equal((await b.getGroupSummary(g)).limit, 0);
 });
 
+test('public reader exposes only summaries and never creates groups or grants allowance', async t => {
+  const f = await fixture(t); if (!f) return;
+  const { connectReader } = await createJiti(import.meta.url).import('../src/public.ts');
+  const reader = await connectReader(f.config); t.after(() => reader.close());
+  assert.deepEqual(Object.keys(reader).sort(), ['close', 'getGroupSummary']);
+  assert.equal((await reader.getGroupSummary(f.g)).remaining, 0);
+  assert.equal(await reader.getGroupSummary({ ...f.g, id: randomUUID() }), null);
+  await assert.rejects(reader.getGroupSummary({ ...f.g, authorityId: randomUUID() }), /authority/i);
+  assert.equal((await f.a.listGroups()).length, 1);
+});
+
 test('missing publication is inspectable without inventing a body or deleting the reservation', async t => {
   const f = await fixture(t); if (!f) return;
   const { connect } = await import('@nats-io/transport-node');
