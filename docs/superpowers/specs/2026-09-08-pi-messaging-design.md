@@ -1,24 +1,33 @@
-# Local Pi messaging — design for implementation review
+# Pi messaging — local-first design for implementation review
 
 Date: 2026-09-08
-Status: **Detailed proposal; awaiting user review before implementation planning.**
-Scope: the messaging slice only. The user accepted the overall separation and sequencing, not every new mechanism below. Project management, knowledge storage, and intent promotion remain separate, evolving designs.
+Status: **User approved the messaging behavior and autonomous implementation/testing, with cheap models for live tests.**
+Scope: messaging only. The user delegated resolution of the NATS backend details during implementation; the retained SQLite mechanics below are historical proposals, not requirements to implement a second backend. Project management, knowledge storage, and intent promotion remain separate, evolving designs. The implementation plan and package README will record the selected broker protocol and verification evidence.
 
 ## 1. Purpose
 
-Let explicitly connected Pi sessions on one machine exchange addressed messages without the user copying them between terminals. Preserve independent contexts and human-assigned work boundaries. Make automatic activity finite, inspectable, and stoppable.
+Let explicitly connected Pi sessions exchange addressed messages without the user copying them between terminals. Implement same-machine communication first, while preserving a path to remote peers without rewriting Pi-facing behavior. Preserve independent contexts and human-assigned work boundaries. Make automatic activity finite, inspectable, and stoppable.
 
-Deliver a locally owned `pi-messaging/` package in this repository. Do not install a third-party messaging/orchestration package, run a service, launch other agents, or manage projects/worktrees.
+Deliver a locally owned `pi-messaging/` package in this repository. A focused queue dependency and one small local broker are acceptable if they simplify implementation. V1 does not adopt a third-party agent/orchestration framework, launch other agents, or manage projects/worktrees. Local storage is an adapter choice, not the permanent public messaging architecture.
 
 ### Requirements carried forward
 
-- One OS user, one machine, local storage; no messaging network listener.
+- V1: one OS user, one machine, local operational state. One small local broker is acceptable; cross-machine connections remain deferred.
+- Future expansion: remote messaging must be possible through a replaceable backend without exposing SQLite paths or synchronous-local assumptions to the Pi adapter or project integration. This is a user requirement from spec review, not a commitment to ship networking in v1.
 - Explicit participation; independent sessions do not discover or share content globally by default.
 - Automatic handoff to open idle/busy participants after human opt-in.
 - A shared finite budget, initially 12 automatic handoffs per explicitly armed group round. Replies, restarts, and time cannot replenish it.
 - Human-visible status, attribution, pause, and recovery from ambiguous delivery.
 - No automatic launch of closed sessions or inherited participation for new/forked sessions.
-- Small reviewable code and no additional third-party runtime dependencies beyond Pi's existing packages.
+- Small reviewable code. A focused messaging-queue dependency is acceptable if it reduces implementation complexity; avoid opinionated agent frameworks and unnecessary dependencies.
+
+### Backend selection reopened during review
+
+The user permits a small queue dependency when it makes implementation simpler and has explicitly confirmed that running one small local broker is acceptable. This is scoped acceptance of the service/dependency trade-off, not approval of the complete spec or permission to begin implementation. NATS JetStream with the official modular Node client is now the leading candidate; BullMQ with Redis remains a comparison point.
+
+SQLite-specific sections below retain the original candidate's schema, polling, failure handling, package layout, and tests for comparison. They are not a settled backend choice or an implementation-ready NATS design. A broker-based revision must first establish coherent budget/admission and duplicate-handoff protection, then update those sections before the full spec can be approved.
+
+Before choosing, compare custom code removed against service/dependency/maintenance costs, and verify that global allowance and uncertain-handoff protection remain simple. Do not replace one custom queue with a broker plus an equally elaborate second state system without demonstrating the benefit. The backend-independent boundary remains applicable.
 
 ### New implementation proposals requiring review
 
@@ -26,10 +35,11 @@ Deliver a locally owned `pi-messaging/` package in this repository. Do not insta
 2. Use bounded polling, rather than filesystem notifications, for transport discovery.
 3. Treat handoff as an **at-most-once attempt per message ID**, not guaranteed delivery. Never automatically replay an ambiguous attempt.
 4. Do not retain membership across reload, restart, or session replacement. Joining again creates a new peer identity; old inboxes remain inspectable, not automatically redirected.
+5. Put local operational storage behind one asynchronous backend interface. This implements the user's remote-expansion requirement without implementing a remote backend yet.
 
 ## 2. Non-goals
 
-No task planner, coordinator agent, broadcast tool, role presets, transcript sharing, automatic spec acceptance, memory extraction, embeddings, Obsidian integration, Git operations, worktree operations, tmux automation, cross-machine transport, attachment copying, encryption service, or global token accounting.
+No task planner, coordinator agent, broadcast tool, role presets, transcript sharing, automatic spec acceptance, memory extraction, embeddings, Obsidian integration, Git operations, worktree operations, tmux automation, cross-machine transport, attachment copying, encryption service, or global token accounting. Cross-machine transport is deferred implementation scope, not a permanent exclusion; §11 defines the boundary that preserves this option.
 
 This is not a sandbox against malicious code running as the same OS user. It is not a claim that 12 handoffs bound the work performed inside an individual agent run, or inside another extension's loop.
 
@@ -52,7 +62,7 @@ Consequences:
 - Do not call `sendUserMessage`: peer text must not impersonate the human or enter slash-command routing.
 - Pause and leave cannot retract an already admitted message from Pi's own queue.
 
-Runtime baseline: Node >=22.19.0, consistent with installed Pi's engine requirement. Node 22.19 documents `node:sqlite` as active-development API; use only `DatabaseSync`, prepared statements, and explicit transactions. The local Node 26.5 runtime was probed successfully; CI currently uses Node 24. Implementation must test the supported minimum and CI runtime rather than assume identical native-module behavior. If SQLite is unavailable, disable this extension with a clear diagnostic; do not install a fallback package.
+Runtime baseline for the local SQLite adapter: Node >=22.19.0, consistent with installed Pi's engine requirement. Node 22.19 documents `node:sqlite` as active-development API; use only `DatabaseSync`, prepared statements, and explicit transactions. The local Node 26.5 runtime was probed successfully; CI currently uses Node 24. Implementation must test the supported minimum and CI runtime rather than assume identical native-module behavior. If SQLite is unavailable, disable this extension with a clear diagnostic; do not install a fallback package.
 
 ## 4. Storage choice
 
@@ -62,9 +72,10 @@ Alternatives considered:
 |---|---|---|
 | Individual JSON inbox files and lock directories | Direct inspection with ordinary tools | Atomic budget + message claim requires a transaction protocol, crash recovery, and lock ownership rules |
 | **Built-in SQLite** | One transaction for allowance, claim, and recipient ownership; OS releases locks after process death | Binary runtime file, minimum runtime/API compatibility to test |
-| Daemon or socket broker | Central coordinator | Extra lifecycle/security surface; unnecessary for this scale |
+| **NATS JetStream — leading candidate under review** | Durable messaging and broker-managed consumers; native path to remote connections | One broker service plus focused client modules; application admission rules still require design |
+| BullMQ with Redis | Established persistent job queue with consumer coordination | Redis service plus client/library dependencies; more job-oriented abstractions |
 
-Choose SQLite for operational state only. This does not change the proposal to keep future knowledge/spec documents in ordinary files.
+SQLite was the original proposed **local operational backend**, behind the asynchronous boundary in §11. Its details below are retained for comparison while the broker candidate is evaluated. UI/tools and Pi delivery must not access its tables or files. A later remote coordinator could keep SQLite privately on its server, or use a broker/another store; remote clients must never share the SQLite file over a network filesystem. This does not change the proposal to keep future knowledge/spec documents in ordinary files.
 
 ### Location and permissions
 
@@ -157,7 +168,11 @@ Tool guidance: peer text is a request or report from another agent, not human au
 
 ## 7. Minimal data model
 
-Physical table/column names below are part of the implementation proposal, not a public extension API.
+Physical table/column names below belong to the local adapter, not a wire protocol or public extension API. PID and absolute session-file paths are local metadata, excluded from portable peer/message payloads and not used as remote identity or authentication.
+
+### `metadata`
+
+One persisted `authority_id` UUID, created atomically with a new store and unchanged across restarts. Group references are scoped by this identity so an unavailable backend can never be silently replaced by a fresh local group with a new allowance.
 
 ### `groups`
 
@@ -193,13 +208,13 @@ An `attempted` message remains visibly awaiting receipt; after recipient departu
 
 ## 8. Atomic admission and finite automatic work
 
-Use short `BEGIN IMMEDIATE` transactions for state changes. Never hold a transaction while awaiting input, invoking Pi, performing asynchronous work, or waiting for a model.
+The local backend uses short `BEGIN IMMEDIATE` transactions for state changes. Never hold a transaction while awaiting input, invoking Pi, performing asynchronous work, or waiting for a model. Runtime code requests a handoff reservation through the asynchronous backend interface; it does not execute this SQL or maintain its own independent group allowance.
 
 Before admission, defer if Pi is in a retry/compaction/settling gap: require either `ctx.isIdle()` or an active agent run tracked by `agent_start`/`agent_end`. Do not mistake every non-idle state for a streaming session that accepts steering. A concurrent runtime change can still make a handoff fail; the uncertain-attempt rule remains necessary.
 
 A receiver poll atomically:
 
-1. Checks that its in-memory runtime generation is current and its peer is active.
+1. Checks that the backend-bound recipient peer is active. The Pi runtime checks its own generation before calling the backend and again after awaiting the result; the store does not inspect Pi context.
 2. Checks the group is armed and has remaining allowance.
 3. Checks this peer has no unresolved `attempted` handoff.
 4. Selects its oldest queued message by monotonic sequence.
@@ -207,9 +222,11 @@ A receiver poll atomically:
 6. Marks the group exhausted if this consumes the last allowance.
 7. Commits.
 
-Immediately after a successful commit, with no intervening `await`, the same runtime attempts exactly one call to:
+The backend returns a serializable reservation only after commit, identifying the authority, round, peer, message, and attempt. The runtime awaits that result, then rechecks its local generation and joined peer. If either changed while waiting, do not call Pi and do not refund/requeue the reserved attempt automatically. Otherwise, with no further intervening `await`, attempt exactly one call to:
 
 `pi.sendMessage(customPeerMessage, { triggerTurn: true, deliverAs: "steer" })`.
+
+This post-await check is required even for the local adapter, so later network latency cannot introduce a stale-context delivery bug. A backend error known to have rolled back may retry later; an uncertain timeout/outcome stops local admissions rather than assuming that no reservation occurred.
 
 The durable admission is the linearization point. A pause/revocation committed before admission prevents it. A pause/revocation committed after admission cannot retract it; the UI must state that already admitted messages may still appear. At most one unobserved handoff is admitted per receiver.
 
@@ -225,7 +242,7 @@ Every successful admission consumes allowance even while the agent is busy. No b
 
 ### Model-visible envelope
 
-Custom type `pi-messaging.peer.v1`, `display: true`. The text envelope includes group label/ID, sender display name/peer ID, message ID, timestamp, and optional reply reference, followed by the body explicitly labeled as peer content. `details` carries the same IDs for receipt correlation, but metadata needed by the model must appear in `content` because custom details are not model context.
+Custom type `pi-messaging.peer.v1`, `display: true`. The versioned, JSON-serializable text envelope includes authority ID, group label/ID, sender display name/peer ID, message ID, timestamp, and optional reply reference, followed by the body explicitly labeled as peer content. `details` carries the same IDs for receipt correlation, but metadata needed by the model must appear in `content` because custom details are not model context.
 
 Escape terminal control characters and display names. Use a distinct renderer label and render payloads as text; do not evaluate slash syntax, shell substitutions, embedded scripts, or automatically open referenced files/URLs. A referenced artifact is just a reference until an agent deliberately opens it with its own tools.
 
@@ -233,7 +250,7 @@ Escape terminal control characters and display names. Use a distinct renderer la
 
 ### Receipt
 
-Listen to `message_end`; only accept a `role: custom` event with the exact custom type and matching group, recipient peer, message ID, and attempt from this runtime. Update the record transactionally to observed and clear its in-flight gate. Do not send an acknowledgment message or trigger a new turn in this handler. The next timer tick can admit further work if allowance remains.
+Listen to `message_end`; only accept a `role: custom` event with the exact custom type and matching authority, group, recipient peer, message ID, and attempt from this runtime. Update the record transactionally to observed and clear its in-flight gate. Do not send an acknowledgment message or trigger a new turn in this handler. The next timer tick can admit further work if allowance remains.
 
 A replayed history entry, renderer call, tool result, ordinary assistant text, or peer claim of receipt is not a receipt. No transcript scanning or rewriting is required for recovery in v1.
 
@@ -277,33 +294,51 @@ On human commands and send operations, bounded maintenance can remove terminal r
 
 SQLite may retain reusable free pages and temporarily create a rollback journal; the logical caps are not advertised as an exact byte-level disk quota. No duplicate text log, automatic transcript archive, attachment store, or backup daemon is created.
 
-## 11. Boundaries with future project management
+## 11. Local-first backend and project integration
 
-Publish small read-only DTOs under `pi-messaging/public`:
+### Backend boundary
 
-- `GroupRef { id, label }`;
+Pi commands, tools, and the runtime depend on a narrow `MessagingBackend` interface, not on a SQLite connection or file path. Its operations return promises and serializable data, even when the local adapter executes a short synchronous transaction internally. The operation families are group/status reads, human control operations, peer participation/heartbeat, idempotent enqueue, atomic handoff reservation, and receipt/retention updates. Use the semantics already defined above rather than introducing a generic queue framework.
+
+Construct the local adapter with the configured agent directory at the composition boundary. Do not pass this directory through queue operations or require project callers to read transport files. The v1 implementation supplies only this adapter; no remote configuration, broker, server, plugin registry, or speculative network client is required now.
+
+A reservation combines group authority, recipient ownership, idempotency, and budget consumption. It is not a raw queue receive followed by a separately managed client-side counter. Caller identity is bound to a joined backend participation handle; portable operations must not rely on PID, cwd, a session path, or a caller-supplied human-authorized boolean as an authentication design.
+
+### Remote expansion constraints
+
+A future group spanning machines must have **one authoritative allowance/admission ledger**, reached by every participant. Giving each host a SQLite replica and 12 local credits is not equivalent. A remote coordinator can implement the same operations over an authenticated API and retain private SQLite storage, or use a broker with a coherent admission ledger. Broker redelivery alone cannot be treated as permission for another Pi handoff.
+
+Networking will require its own design/review: authenticated identity, encrypted transport, authorization for participation versus human control, request deduplication after timeouts, disconnect/reconnect semantics, and compatibility negotiation. Version the portable envelope and use typed retry-safe versus uncertain errors. If the authority is unavailable, stop new automatic admissions; do not fall back to a new local ledger or replenish credits. A client can stop its own admissions, but must not report a successful group-wide pause until the authority confirms it. V1 does not claim to implement remote authentication or partition recovery.
+
+### Read-only project surface
+
+Publish small DTOs and an asynchronous reader under `pi-messaging/public`:
+
+- `GroupRef { authorityId, id, label }`;
 - `GroupSummary { group, mode, roundNumber, limit, used, remaining, onlinePeers, pendingCount }`;
-- `PeerSummary { id, groupId, sessionId, displayName, presence }`;
-- `MessageStatus { id, state, createdAt, attemptedAt?, observedAt? }`.
+- `PeerSummary { id, groupId, sessionId, displayName, presence }` (scoped to the connected authority);
+- `MessageStatus { id, state, createdAt, attemptedAt?, observedAt? }`;
+- `MessagingReader.getGroupSummary(ref): Promise<GroupSummary | null>`.
 
-Provide a read-only `readGroupSummary(agentDir, groupId): GroupSummary | null` that does not create storage, join, arm, or load message bodies. Return `null` for an absent store or unknown group; throw a typed error for unsafe/corrupt/unsupported state or a busy database. Read a consistent snapshot and compute `remaining` from the persisted limit/used counters. Do not perform SQLite hot-journal recovery through this read-only interface; report that writable recovery is required. This is the sole non-Pi integration operation required by slice 1. Caller uses the same explicitly configured local agent directory; no message-controlled path is accepted.
+Supply the reader from the configured backend. Reads do not create storage, join, arm, or load message bodies. Return `null` only when the connected authority confirms a group does not exist; report unavailable/mismatched authority, missing local store, unsafe/corrupt/unsupported state, and busy/recovery-required storage as typed errors. Read a consistent snapshot and derive `remaining` from the authoritative counters. The local read-only adapter does not perform hot-journal recovery.
 
-The future project extension may store a `GroupRef`, display this summary, and offer the user a join action through the messaging command flow. It must not parse private tables or bypass human joining/arming. It does not inherit transcripts or assume that a message receipt means a work item is complete.
+The future project extension stores a `GroupRef`, receives a configured reader, displays its summary, and offers the human the existing messaging join flow. It must not parse private tables, invent a replacement group on connection failure, or bypass human joining/arming. A receipt never implies project completion.
 
-No dependency on `pi-worktree-core` is needed for messaging. Shared DTOs do not require a generic cross-extension service framework.
+No dependency on `pi-worktree-core` is needed. This is one explicit backend boundary, not a general distributed-agent framework.
 
 ## 12. Implementation structure and repository integration
 
 Proposed source boundaries:
 
-- `src/contracts.ts`: IDs, DTOs, limits, validation, payload hashing, error codes; no Pi lifecycle or UI.
-- `src/store.ts`: SQLite schema, bounded reads, transactional sends/claims/receipts, quotas and pruning; no Pi APIs.
-- `src/runtime.ts`: joined-peer lifecycle, generation fencing, polling, receipt correlation, and the Pi handoff adapter; injectable clock/scheduler for tests.
-- `src/ui.ts`: command parsing and small standard TUI views; no SQL or budget arithmetic.
-- `src/public.ts`: the read-only future-project interface.
+- `src/contracts.ts`: IDs, versioned serializable DTOs, backend interface, limits, validation, payload hashing, typed errors; no Pi lifecycle, filesystem, or UI.
+- `src/store.ts`: local SQLite schema, transactions, quotas and pruning; private to the local adapter, with no Pi APIs.
+- `src/local-backend.ts`: implement `MessagingBackend` over the store and bind participation identity; configure the agent directory here, not in consumers.
+- `src/runtime.ts`: joined-peer lifecycle, generation fencing, backend polling, receipt correlation, and the Pi handoff adapter; depend on the async interface and an injectable clock/scheduler, not SQL/filesystem helpers.
+- `src/ui.ts`: command parsing and small standard TUI views; no SQL, transport paths, or budget arithmetic.
+- `src/public.ts`: portable read-only DTO/reader exports for future project integration.
 - `extensions/messaging.ts`: thin registration/wiring.
 
-No additional production npm dependencies. Declare imported Pi packages and `typebox` as peers, following local package policy. Tests can use the existing pinned `jiti` and Node test runner.
+The SQLite candidate needs no additional production npm dependencies. If the reviewed queue alternative is selected, explicitly list and pin the focused runtime dependencies and its service requirements rather than treating zero dependencies as an invariant. Declare imported Pi packages and `typebox` as peers, following local package policy. Tests can use the existing pinned `jiti` and Node test runner.
 
 During implementation, integrate the package into root workspaces/lockfile, TypeScript includes, the local package installation list, and Pi settings template. Update the repository's explicit package-list tests. Keep directory/state exclusions consistent with Chezmoi. Do not upgrade the repository-wide Pi pins as an incidental change. If actual compatibility testing exposes a need for an upgrade, report it as a separate decision.
 
@@ -327,7 +362,8 @@ This document itself does not install or register the package.
 
 - Exact tool and command surfaces; no model-accessible arm/join/control path.
 - Calls use custom peer messages, `triggerTurn: true`, `deliverAs: "steer"`, never `sendUserMessage`.
-- No handoff before a committed reservation, even if receiving events synchronously.
+- No handoff before a committed reservation, even if receiving events synchronously. Exercise the same runtime with immediate and artificially delayed fake backends; leave/reload during an awaited reservation must not call Pi in a stale context or refund an uncertain attempt.
+- UI/runtime/public-reader consumers import no SQLite or transport filesystem operations. Envelopes round-trip through JSON without local PID/path metadata. An unavailable or mismatched authority never becomes a new local group or fresh allowance.
 - Matching live receipt clears the gate; foreign, historical, duplicated, or malformed receipts do not cause a turn or budget change. Retry/compaction/settling gaps defer admission rather than spending allowance on a predictably rejected handoff.
 - One unresolved attempt blocks further admission for that recipient without blocking other peers.
 - Factory/unjoined/non-TUI modes start no timers or database mutation.
@@ -344,7 +380,7 @@ The storage/adapter tests are the deterministic acceptance gate. Live model beha
 
 ## 14. Review and implementation boundary
 
-Review especially the SQLite/runtime requirement, non-restored membership, old-inbox handling, allowance semantics, and pause/crash limitations. These are explicit design choices, not facts inferred from an earlier conversational yes.
+Review especially the local-first asynchronous backend boundary, SQLite/runtime requirement, non-restored membership, old-inbox handling, allowance semantics, and pause/crash limitations. Remote implementation remains deferred; preserving its extension point is now a requirement. These are explicit design choices, not facts inferred from an earlier conversational yes.
 
 After the user approves this scoped document, write a separate implementation plan with test-first tasks and review checkpoints. Until then, no extension code, dependency installation, settings activation, project-management code, or vault changes are authorized by this document.
 
