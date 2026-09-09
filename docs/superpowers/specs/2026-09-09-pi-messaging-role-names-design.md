@@ -14,7 +14,7 @@ The user approved removing manual name entry, discovering peers, and self-select
 
 ## Agent behavior and tool boundary
 
-Add `peer_message` action `rename` with `displayName`. It updates only the current joined peer via the existing backend heartbeat/name operation. Reject target selectors, invalid names, unjoined/non-TUI callers, and concurrent renames of the same participation. Reuse existing nonempty, single-line, terminal-control-safe, 64-code-point validation. Capture the peer before awaiting and fence the result against leave/rejoin or session changes. Do not add a new ledger schema or broker API.
+Add `peer_message` action `rename` with `displayName`. It updates only the current joined peer via the existing backend heartbeat/name operation. Reject meaningful target selectors, invalid names, unjoined/non-TUI callers, and concurrent renames of the same participation. The tool boundary normalizes harmless shared-schema padding before Pi validation: empty/null unused fields and optional reply references are absent; pagination is ignored outside status. It does not discard nonempty rename targets/content, unknown keys, required fields, or malformed nonempty IDs. Reuse existing nonempty, single-line, terminal-control-safe, 64-code-point validation. Capture the peer before awaiting and fence the result against leave/rejoin or session changes. Do not add a new ledger schema or broker API.
 
 `peers` remains a bounded same-group metadata read, now including session IDs alongside names and routing IDs. It exposes no message bodies or other sessions' transcripts.
 

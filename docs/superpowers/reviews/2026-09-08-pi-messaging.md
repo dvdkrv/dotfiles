@@ -58,6 +58,18 @@ A separate read-only Gemini 3 Flash review (approximately **$0.02708** at publis
 
 No source change was needed for those review claims. No user sessions were reloaded/joined, and the hands-on broker was not restarted or stopped by these tests. No merge or push was performed.
 
+## 2026-09-09 argument-default compatibility fix
+
+A user-reported OpenAI-model run exposed a gap the Flash smoke did not exercise: the model filled unused fields in the shared schema rather than omitting them. A valid self-rename carried empty routing/message fields and `beforeSequence: 1`, tripping the extra-key guard. A send used the discovered routing ID but also `inReplyTo: ""`, which failed reply-ID validation before any message reservation/publication. Only the relevant tool call/result records were inspected; user message bodies were redacted and never copied into tests. No live message was sent or retried during debugging.
+
+Added a pure tool-boundary preparation hook that removes neutral optional/unused fields and ignores pagination outside status. Execution also normalizes for direct callers. Nonempty rename targets/content, unknown keys, malformed nonempty IDs, valid reply references, required values, and meaningful status cursors are preserved for validation. Backend UUID constraints, routing, bodies, hashes, allowance, and uncertain-outcome rules remain unchanged. ID errors now distinguish `toPeerId` from `inReplyTo`.
+
+The regression runs the captured-style shapes (with fabricated data) through Pi's real tool-definition adapter and agent-core argument preparation/validation/execution pipeline, with a bounded scripted provider instead of a billed model. It reproduced both reported failures before the fix. It also revealed SDK coercion of required null name/body values into literal `"null"`; required strings are now checked before that coercion. No partial body or recipient is defaulted. An actual broker regression verifies padded rename/send calls preserve message history and queued routing.
+
+Validation: **137 aggregate tests / 55 messaging tests**, zero failures/skips; typecheck, ShellCheck, rendered configuration/Chezmoi checks, headless Neovim, and diff checks pass. All 55 messaging tests pass on Node 22.19.0. The extension/argument pipeline suite passes using both development Pi 0.82.0 and installed Pi 0.84.1. No paid model calls were needed for this regression. This is not a claim of a new live OpenAI inference test.
+
+Existing user sessions and the hands-on broker remain untouched. Loading the fix requires `/reload` and explicit rejoining; re-arming is not needed just to install the fix. Rediscover routing IDs after rejoining; do not reuse IDs from the earlier transcript.
+
 ## Remaining limits
 
 - No real-terminal automation or macOS execution was performed; SDK UI callbacks, rendering, and Linux processes were tested.

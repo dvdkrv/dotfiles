@@ -49,6 +49,8 @@ Type `/messages ` and press **Tab** to see subcommands with descriptions and arg
 
 All controls require TUI mode. The agent tool has **peers**, **status**, **send**, and **rename** (self only); it cannot join, arm, grant credits, or inspect pending bodies. Status output is metadata-only and paginated at 20 records.
 
+The shared tool schema tolerates harmless provider padding: empty/null optional reply references mean no reply, empty unused fields are omitted, and `beforeSequence` is used only for `status`. A meaningful `toPeerId` on `rename` is still rejected. Required names, recipients, and bodies are never replaced with defaults or coerced from null; malformed nonempty IDs still fail. Send bodies and valid reply references are preserved exactly.
+
 ### Session identity and role names
 
 Peer lists show names such as `test-reviewer · session a31b7c92`. The initial display name is the full Pi session ID; compact views shorten it. Discovery returns the full `sessionId`, `displayName`, and opaque routing `id` for each active participant. Names and session IDs are **not** routing aliases: agents send using `toPeerId` from discovery or the incoming message's sender ID. Numbered human choices remain distinct even when labels or session-ID prefixes match.

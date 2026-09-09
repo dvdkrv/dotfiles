@@ -12,7 +12,8 @@ export function validateDisplayName(value: string): string {
 }
 export function validateInput(input: SendInput): SendInput {
   if (typeof input.text !== 'string' || !input.text.trim() || Buffer.byteLength(input.text, 'utf8') > 8192) fail('validation', 'Message body must be nonempty and at most 8 KiB UTF-8');
-  if (!uuid.test(input.toPeerId) || (input.inReplyTo !== undefined && !uuid.test(input.inReplyTo))) fail('validation', 'Invalid peer/reply ID');
+  if (!uuid.test(input.toPeerId)) fail('validation', 'Invalid toPeerId: use the full routing id returned by peers');
+  if (input.inReplyTo !== undefined && !uuid.test(input.inReplyTo)) fail('validation', 'Invalid inReplyTo: use a message id, or omit it for a new message');
   return { toPeerId: input.toPeerId, text: input.text, ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}) };
 }
 export function payloadHash(input: SendInput): string { return createHash('sha256').update(JSON.stringify(validateInput(input))).digest('hex'); }

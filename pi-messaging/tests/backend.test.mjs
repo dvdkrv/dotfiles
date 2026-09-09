@@ -51,11 +51,13 @@ test('role tool publishes self-name without rerouting queued work or inheriting 
   const oldId = f.a.peer.id;
   const before = await f.a.send({ toPeerId: f.b.peer.id, text: 'before rename' }, 'before');
   const incoming = await f.b.send({ toPeerId: oldId, text: 'old inbox' }, 'incoming');
-  await tools.get('peer_message').execute('role', { action: 'rename', displayName: 'test-reviewer' }, undefined, undefined, ctx);
+  await tools.get('peer_message').execute('role', { action: 'rename', displayName: 'test-reviewer', toPeerId: '', text: '', inReplyTo: '', beforeSequence: 1 }, undefined, undefined, ctx);
   const discovered = (await f.b.peers(f.g)).find(p => p.id === oldId);
   assert.equal(discovered.sessionId, 'a'); assert.equal(discovered.displayName, 'test-reviewer');
   assert.equal(f.a.peer.displayName, 'test-reviewer');
-  const after = await f.a.send({ toPeerId: f.b.peer.id, text: 'after rename' }, 'after');
+  const sent = await tools.get('peer_message').execute('after', { action: 'send', toPeerId: f.b.peer.id, text: 'after rename', inReplyTo: '', beforeSequence: 1 }, undefined, undefined, ctx);
+  const after = (await f.a.listMessages(f.g)).find(m => m.id === JSON.parse(sent.content[0].text).id);
+  assert.equal(after.inReplyTo, undefined);
   assert.equal((await f.b.readBody(f.g, before.id)).senderName, 'a');
   assert.equal((await f.b.readBody(f.g, after.id)).senderName, 'test-reviewer');
   assert.equal(after.senderPeerId, before.senderPeerId);

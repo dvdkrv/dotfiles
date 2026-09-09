@@ -6,6 +6,13 @@ const { registerMessaging } = await jiti.import('../extensions/messaging.ts');
 const p = await jiti.import('../src/policy.ts');
 import { randomUUID } from 'node:crypto';
 import { CombinedAutocompleteProvider } from '@earendil-works/pi-tui';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import { createAssistantMessageEventStream, validateToolArguments } from '@earendil-works/pi-ai';
+const sdkEntry = process.env.PI_MESSAGING_PI_SDK ? pathToFileURL(process.env.PI_MESSAGING_PI_SDK).href : import.meta.resolve('@earendil-works/pi-coding-agent');
+const sdkRequire = createRequire(sdkEntry); const corePackage = '@earendil-works/pi-agent-core/package.json';
+const { Agent } = await import(new URL(sdkRequire(corePackage).main, pathToFileURL(sdkRequire.resolve(corePackage))).href);
+const { wrapToolDefinition } = await import(new URL('./core/tools/tool-definition-wrapper.js', sdkEntry).href);
 
 function fixture(t) {
   const state = p.newLedger(randomUUID()); const group = p.createGroup(state, 'review');
@@ -203,7 +210,7 @@ test('rename rejects administrative targets, invalid names, and unjoined or non-
   for (const displayName of [undefined, 123, '', ' ', 'x'.repeat(65), 'review\nlead', '\x1b[31mreview', '\u202elead']) {
     await assert.rejects(execute(f, 'rename', { displayName }), /display.?name|rename/i);
   }
-  for (const fields of [{ toPeerId: f.other.id }, { text: 'unused' }, { inReplyTo: randomUUID() }, { beforeSequence: 1 }]) {
+  for (const fields of [{ toPeerId: f.other.id }, { text: 'unused' }, { inReplyTo: randomUUID() }]) {
     await assert.rejects(execute(f, 'rename', { displayName: 'reviewer', ...fields }), /rename|only/i);
   }
   for (const mode of ['rpc', 'json', 'print']) {
@@ -212,6 +219,88 @@ test('rename rejects administrative targets, invalid names, and unjoined or non-
   assert.equal(f.backend.peer.displayName, 'local'); assert.equal(f.other.displayName, 'Other');
   await execute(f, 'rename', { displayName: '🧪'.repeat(64) });
   assert.equal(f.backend.peer.displayName, '🧪'.repeat(64));
+});
+
+test('real Pi argument pipeline accepts captured-style padding without changing input or sending extra work', async t => {
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  const tool = f.tools.get('peer_message');
+  const calls = [
+    { action: 'peers', displayName: 'test-crawler', toPeerId: '', text: '', inReplyTo: '', beforeSequence: 1 },
+    { action: 'rename', displayName: 'test-crawler', toPeerId: '', text: '', inReplyTo: '', beforeSequence: 1 },
+    { action: 'send', displayName: 'not-a-rename', toPeerId: f.other.id, text: '  exact body\n', inReplyTo: '', beforeSequence: 1 },
+    { action: 'send', displayName: null, toPeerId: f.other.id, text: 'second body', inReplyTo: null, beforeSequence: null },
+    { action: 'rename', displayName: null },
+    { action: 'send', toPeerId: f.other.id, text: null },
+  ];
+  const original = structuredClone(calls); let requests = 0;
+  const agent = new Agent({
+    initialState: { model: { id: 'scripted', name: 'Scripted regression', provider: 'test', api: 'openai-responses', baseUrl: 'https://invalid.example',
+      reasoning: false, input: ['text'], contextWindow: 8192, maxTokens: 128, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      tools: [wrapToolDefinition(tool, () => f.ctx)] },
+    streamFn: () => {
+      assert.ok(requests <= calls.length, 'Scripted provider must stay bounded');
+      const args = calls[requests++];
+      const message = { role: 'assistant', api: 'openai-responses', provider: 'test', model: 'scripted', timestamp: 1,
+        content: args ? [{ type: 'toolCall', id: `call-${requests}`, name: 'peer_message', arguments: args }] : [{ type: 'text', text: 'done' }],
+        stopReason: args ? 'toolUse' : 'stop', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+      const stream = createAssistantMessageEventStream(); stream.push({ type: 'done', reason: message.stopReason, message }); return stream;
+    },
+  });
+  t.after(() => agent.abort()); await agent.prompt('Exercise the isolated messaging fixture');
+  const results = agent.state.messages.filter(m => m.role === 'toolResult');
+  assert.equal(results.length, 6);
+  const listed = JSON.parse(results[0].content[0].text);
+  assert.equal(listed.peers.find(peer => peer.id === listed.selfId).displayName, 'local');
+  assert.ok(results.slice(0, 4).every(m => !m.isError), JSON.stringify(results.map(m => m.content)));
+  assert.ok(results.slice(4).every(m => m.isError), 'Required nulls must not be coerced into a literal name/body "null"');
+  assert.deepEqual(calls, original); assert.equal(f.backend.peer.displayName, 'test-crawler'); assert.equal(f.other.displayName, 'Other');
+  const messages = Object.values(f.state.messages);
+  assert.equal(messages.length, 2); assert.ok(messages.every(m => m.recipientPeerId === f.other.id && m.inReplyTo === undefined));
+  assert.equal((await f.backend.readBody(f.group, messages[0].id)).text, '  exact body\n');
+  assert.equal(f.state.groups[f.group.id].used, 0); assert.equal(f.delivered.length, 0); assert.equal(requests, 7);
+});
+
+test('direct execution normalizes neutral padding but preserves real reply references and status cursors', async t => {
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  for (const empty of ['', null, undefined]) {
+    await execute(f, 'rename', { displayName: 'test-reviewer', toPeerId: empty, text: empty, inReplyTo: empty, beforeSequence: 1 });
+  }
+  const first = JSON.parse((await execute(f, 'send', { toPeerId: f.other.id, text: 'one', inReplyTo: '' })).content[0].text);
+  await execute(f, 'send', { toPeerId: f.other.id, text: 'reply', inReplyTo: first.id });
+  assert.equal(Object.values(f.state.messages)[1].inReplyTo, first.id);
+  const tool = f.tools.get('peer_message'); assert.equal(typeof tool.prepareArguments, 'function');
+  const statusArgs = tool.prepareArguments({ action: 'status', displayName: '', toPeerId: '', text: '', inReplyTo: '', beforeSequence: 1 });
+  assert.equal(statusArgs.beforeSequence, 1);
+  const status = JSON.parse((await tool.execute('status', statusArgs, undefined, undefined, f.ctx)).content[0].text);
+  assert.equal(status.outgoing.length, 0);
+  const firstPage = tool.prepareArguments({ action: 'status', beforeSequence: null });
+  assert.equal(JSON.parse((await tool.execute('status', firstPage, undefined, undefined, f.ctx)).content[0].text).outgoing.length, 2);
+  assert.throws(() => validateToolArguments(tool, { name: 'peer_message', arguments: tool.prepareArguments({ action: 'status', beforeSequence: 0 }) }), /beforeSequence|minimum/i);
+  assert.throws(() => validateToolArguments(tool, { name: 'peer_message', arguments: tool.prepareArguments({ action: 'peers', unexpected: null }) }), /unexpected|additional/i);
+  for (const input of [null, undefined, [], 1, 'peers']) {
+    assert.throws(() => validateToolArguments(tool, { name: 'peer_message', arguments: tool.prepareArguments(input) }));
+  }
+});
+
+test('padding compatibility cannot discard meaningful rename targets, malformed IDs, or required values', async t => {
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  for (const input of [
+    { action: 'rename', displayName: 'other-role', toPeerId: f.other.id, beforeSequence: 1 },
+    { action: 'rename', displayName: 'other-role', text: 'not harmless padding' },
+    { action: 'rename', displayName: '' }, { action: 'rename', displayName: null },
+    { action: 'send', toPeerId: '', text: 'body' }, { action: 'send', toPeerId: null, text: 'body' },
+    { action: 'send', toPeerId: f.other.id, text: '' }, { action: 'send', toPeerId: f.other.id, text: null },
+    ...['not-a-uuid', ' ', 'null'].map(inReplyTo => ({ action: 'send', toPeerId: f.other.id, text: 'body', inReplyTo })),
+  ]) await assert.rejects(execute(f, input.action, input), /rename|display.?name|send|body|peer|reply/i);
+  assert.equal(f.backend.peer.displayName, 'local'); assert.equal(f.other.displayName, 'Other');
+  assert.equal(Object.keys(f.state.messages).length, 0); assert.equal(f.state.groups[f.group.id].limit, 0);
+});
+
+test('send validation identifies the bad ID field rather than blaming a valid recipient', async t => {
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  await assert.rejects(execute(f, 'send', { toPeerId: f.other.id, text: 'body', inReplyTo: 'not-a-message-id' }), /inReplyTo/);
+  await assert.rejects(execute(f, 'send', { toPeerId: 'not-a-peer-id', text: 'body' }), /toPeerId/);
+  assert.equal(Object.keys(f.state.messages).length, 0); assert.equal(f.state.groups[f.group.id].used, 0);
 });
 
 test('concurrent self-renames are rejected instead of racing the local name cache', async t => {
