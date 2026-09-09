@@ -3,7 +3,7 @@ import { MessagingError, type Envelope, type Group, type GroupRef, type GroupSum
 
 export interface Ledger { version: 1; authorityId: string; sequence: number; groups: Record<string, Group>; peers: Record<string, Peer>; messages: Record<string, MessageStatus> }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const control = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+const control = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 export function fail(code: string, message: string): never { throw new MessagingError(code, message); }
 export function safeText(text: string): string { return text.replace(control, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`); }
 function name(value: string): string {
@@ -22,7 +22,7 @@ export function newLedger(authorityId: string): Ledger {
 }
 export function validateLedger(value: unknown, authorityId: string): asserts value is Ledger {
   const s = value as Ledger;
-  if (!s || s.version !== 1 || !s.groups || !s.peers || !s.messages || !Number.isSafeInteger(s.sequence) || s.sequence < 0) fail('corrupt', 'Unsupported or corrupt messaging ledger');
+  if (!s || s.version !== 1 || ![s.groups, s.peers, s.messages].every(map => map && typeof map === 'object' && !Array.isArray(map)) || !Number.isSafeInteger(s.sequence) || s.sequence < 0) fail('corrupt', 'Unsupported or corrupt messaging ledger');
   if (s.authorityId !== authorityId) fail('authority', 'Messaging authority mismatch; refusing replacement state');
   if (Object.keys(s.groups).length > 32 || Object.keys(s.peers).length > 512 || Object.keys(s.messages).length > 2000) fail('corrupt', 'Ledger exceeds bounds');
   for (const [id, g] of Object.entries(s.groups)) {

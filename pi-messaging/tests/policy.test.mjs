@@ -57,6 +57,18 @@ test('reject invalid bodies, names, groups, cross-group routing, replies, self-s
   assert.throws(() => send(f), /active/i);
 });
 
+test('membership and retained-group bounds reject overflow without changing existing state', () => {
+  const f = fixture();
+  for (let i = 2; i < 16; i++) p.joinPeer(f.state, f.group, { sessionId: `s-${i}`, displayName: `Peer ${i}` });
+  assert.throws(() => p.joinPeer(f.state, f.group, { sessionId: 'extra', displayName: 'Extra' }), /full/i);
+  assert.equal(Object.keys(f.state.peers).length, 16);
+  for (let i = 1; i < 32; i++) p.createGroup(f.state, `group-${i}`);
+  assert.throws(() => p.createGroup(f.state, 'extra'), /full/i);
+  assert.equal(Object.keys(f.state.groups).length, 32);
+  assert.ok(send(f, 'utf8-boundary', '🙂'.repeat(2048)));
+  assert.equal(f.state.groups[f.group.id].used, 0);
+});
+
 test('pause, dismissal, and revocation cannot refund or replay; forged receipts fail', () => {
   const f = fixture(); p.arm(f.state, f.group, 3);
   const first = send(f); const r = p.admit(f.state, f.b.id, first.id);
@@ -86,7 +98,9 @@ test('summaries omit bodies and authority mismatch or invalid state fails closed
   assert.equal(JSON.stringify(p.summary(f.state, f.group)).includes('secret-body'), false);
   assert.throws(() => p.summary(f.state, { ...f.group, authorityId: randomUUID() }), /authority/i);
   assert.throws(() => p.validateLedger({ ...f.state, version: 900 }, f.state.authorityId));
+  for (const field of ['groups', 'peers', 'messages']) assert.throws(() => p.validateLedger({ ...p.newLedger(f.state.authorityId), [field]: [] }, f.state.authorityId));
   f.state.groups[f.group.id].used = -1;
   assert.throws(() => p.validateLedger(f.state, f.state.authorityId));
   assert.equal(p.safeText('\x1b[31mhello\u202e'), '\\u001b[31mhello\\u202e');
+  assert.equal(p.safeText('a\rb\tc\nend'), 'a\\u000db\\u0009c\nend');
 });

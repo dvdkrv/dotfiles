@@ -27,6 +27,12 @@ The `/task` command is interactive and user-invoked only. It is not exposed as a
 
 SSH configuration is managed through one validated marker block. Unbalanced markers cause the apply step to fail without modifying the existing file.
 
+## Pi peer messaging
+
+The local [`pi-messaging`](pi-messaging/README.md) package lets explicitly joined Pi sessions exchange messages. A human-armed group allowance bounds automatic handoffs; agents cannot re-arm it. It requires one explicitly started, private loopback NATS broker. Loading the package alone does not start a service or opt a session into messaging.
+
+See its README for setup, recovery limitations, and deterministic/cheap-model test commands.
+
 ## Development
 
 Install exact development dependencies:

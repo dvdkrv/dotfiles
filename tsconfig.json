@@ -14,6 +14,8 @@
     "pi-loop-package/extensions/**/*.ts",
     "pi-task/extensions/**/*.ts",
     "pi-worktree-core/src/**/*.ts",
-    "pi-worktree-manager/extensions/**/*.ts"
+    "pi-worktree-manager/extensions/**/*.ts",
+    "pi-messaging/extensions/**/*.ts",
+    "pi-messaging/src/**/*.ts"
   ]
 }

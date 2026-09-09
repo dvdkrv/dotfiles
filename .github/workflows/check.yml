@@ -30,8 +30,38 @@ jobs:
             | sudo tar -xz -C /opt
           echo "/opt/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
 
+      - name: Install pinned messaging test broker
+        run: |
+          mkdir -p "$RUNNER_TEMP/nats"
+          curl -fsSL https://github.com/nats-io/nats-server/releases/download/v2.14.6/nats-server-v2.14.6-linux-amd64.tar.gz -o "$RUNNER_TEMP/nats.tar.gz"
+          echo "61c3d55f69f61ec616b75782250936445f2819e9e5f2ae6159b10a31abd2200c  $RUNNER_TEMP/nats.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/nats.tar.gz" -C "$RUNNER_TEMP/nats"
+          echo "NATS_SERVER=$RUNNER_TEMP/nats/nats-server-v2.14.6-linux-amd64/nats-server" >> "$GITHUB_ENV"
+
       - run: npm ci
       - run: npm test
+        env:
+          PI_MESSAGING_REQUIRE_BROKER: '1'
       - run: npm run typecheck
       - run: npm run lint:shell
       - run: npm run check
+
+  messaging-minimum-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Test messaging with the pinned broker
+        env:
+          PI_MESSAGING_REQUIRE_BROKER: '1'
+        run: |
+          mkdir -p "$RUNNER_TEMP/nats"
+          curl -fsSL https://github.com/nats-io/nats-server/releases/download/v2.14.6/nats-server-v2.14.6-linux-amd64.tar.gz -o "$RUNNER_TEMP/nats.tar.gz"
+          echo "61c3d55f69f61ec616b75782250936445f2819e9e5f2ae6159b10a31abd2200c  $RUNNER_TEMP/nats.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/nats.tar.gz" -C "$RUNNER_TEMP/nats"
+          NATS_SERVER="$RUNNER_TEMP/nats/nats-server-v2.14.6-linux-amd64/nats-server" npm test --workspace pi-messaging

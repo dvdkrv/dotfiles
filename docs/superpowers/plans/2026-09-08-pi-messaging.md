@@ -55,19 +55,19 @@ Backend operations: `listGroups`, `createGroup`, `getGroupSummary`, `join`, `lea
 
 **Interfaces:** produces `connectBackend(config, { initialize? }): Promise<MessagingBackend>` and pure ledger transitions. `GroupRef={authorityId,id,label}`; `Reservation={group,peerId,message,attemptId,round}`; body is portable `Envelope={version:1,authorityId,messageId,groupId,senderPeerId,recipientPeerId,senderName,createdAt,text,inReplyTo?}`.
 
-- [ ] Write policy tests proving quota/identity validation and the finite shared budget. Example independent expectation:
+- [x] Write policy tests proving quota/identity validation and the finite shared budget. Example independent expectation:
   ```js
   const result = await Promise.all(receivers.map(b => b.reserve()));
   assert.equal(result.filter(Boolean).length, 12);
   assert.equal((await sender.getGroupSummary(group)).remaining, 0);
   assert.equal((await sender.listMessages(group)).filter(m => m.state === 'queued').length, 4);
   ```
-- [ ] Run `node --test pi-messaging/tests/policy.test.mjs`; observe missing-feature failure, then implement pure validation/transitions and rerun.
-- [ ] Write real-broker tests for two peers, duplicate sends/conflicts, paused fetch, observation/dismissal, retained uncertain attempts, wrong authority, and pruning. Launch nats-server with private temp config and token; never reuse the user broker.
-- [ ] Write a child-process contender that connects, joins, and reserves against a shared armed group. Assert exactly 12 admitted messages with surplus remaining; killing a committed consumer cannot refund or replay after broker restart.
-- [ ] Run real-broker tests red, implement NATS adapter, rerun green. Reject CAS conflicts safely with bounded retries; only retry the broker's known wrong-revision response, never an uncertain timeout.
-- [ ] Inspect dependency APIs and assert real publication dedup beyond a configured short broker dedup window. Confirm max_ack_pending and consumer filters against actual server state.
-- [ ] Commit `feat: add bounded JetStream messaging backend` after targeted tests and typecheck pass.
+- [x] Run `node --test pi-messaging/tests/policy.test.mjs`; observe missing-feature failure, then implement pure validation/transitions and rerun.
+- [x] Write real-broker tests for two peers, duplicate sends/conflicts, paused fetch, observation/dismissal, retained uncertain attempts, wrong authority, and pruning. Launch nats-server with private temp config and token; never reuse the user broker.
+- [x] Write a child-process contender that connects, joins, and reserves against a shared armed group. Assert exactly 12 admitted messages with surplus remaining; killing a committed consumer cannot refund or replay after broker restart.
+- [x] Run real-broker tests red, implement NATS adapter, rerun green. Reject CAS conflicts safely with bounded retries; only retry the broker's known wrong-revision response, never an uncertain timeout.
+- [x] Inspect dependency APIs and assert real publication dedup beyond a configured short broker dedup window. Confirm max_ack_pending and consumer filters against actual server state.
+- [x] Commit `feat: add bounded JetStream messaging backend` after targeted tests and typecheck pass.
 
 ### Task 2: Safe local broker lifecycle/configuration
 
@@ -75,11 +75,11 @@ Backend operations: `listGroups`, `createGroup`, `getGroupSummary`, `join`, `lea
 
 **Interfaces:** consumes `connectBackend`; produces `readConfig(agentDir)`, `prepareConfig(agentDir,port)`, `runBroker(agentDir,serverPath,port)`; runtime config includes `{version:1,authorityId,server,token,initialized}`.
 
-- [ ] Write tests that reject non-loopback URLs, world-readable files, symlinked messaging/config paths, and unknown versions; missing config must not create files.
-- [ ] Run tests red; implement owner-only configuration and exclusive creation, using fixed config-derived paths rather than agent input.
-- [ ] Write broker subprocess tests that start on a free loopback port, initialize paused state, authenticate clients, reject missing token, shut down only the owned child, and refuse to recreate an initialized missing ledger.
-- [ ] Run tests red; implement explicit foreground startup, durable server config, bounded readiness and signal cleanup; rerun green.
-- [ ] Commit `feat: add explicit private messaging broker lifecycle`.
+- [x] Write tests that reject non-loopback URLs, world-readable files, symlinked messaging/config paths, and unknown versions; missing config must not create files.
+- [x] Run tests red; implement owner-only configuration and exclusive creation, using fixed config-derived paths rather than agent input.
+- [x] Write broker subprocess tests that start on a free loopback port, initialize paused state, authenticate clients, reject missing token, shut down only the owned child, and refuse to recreate an initialized missing ledger.
+- [x] Run tests red; implement explicit foreground startup, durable server config, bounded readiness and signal cleanup; rerun green.
+- [x] Commit `feat: add explicit private messaging broker lifecycle`.
 
 ### Task 3: Pi runtime and human-facing command/tool
 
@@ -87,7 +87,7 @@ Backend operations: `listGroups`, `createGroup`, `getGroupSummary`, `join`, `lea
 
 **Interfaces:** consumes MessagingBackend. `MessagingRuntime` owns joined generation and `wake`, `stop`, `receipt`, `setRunActive`; `registerMessaging(pi, connect?)` wires the production extension with injectable backend creation for tests. Public registration has no I/O.
 
-- [ ] Write delayed-backend tests where `reserve()` is held pending, `stop()` invalidates participation, and resolving the reservation does not call Pi:
+- [x] Write delayed-backend tests where `reserve()` is held pending, `stop()` invalidates participation, and resolving the reservation does not call Pi:
   ```js
   const pending = runtime.wake();
   await reservationStarted;
@@ -96,26 +96,29 @@ Backend operations: `listGroups`, `createGroup`, `getGroupSummary`, `join`, `lea
   await pending;
   assert.equal(deliveries.length, 0);
   ```
-- [ ] Test idle wakeup and busy injection using exact `{triggerTurn:true,deliverAs:'steer'}`, custom type, IDs/attempt token, one matching live receipt, foreign/history receipt rejection, callback coalescing, and disconnect failure.
-- [ ] Run runtime tests red; implement generation fencing and callback lifecycle; rerun green.
-- [ ] Capture actual extension registration in tests and exercise command handlers with scripted TUI responses. Non-TUI modes must fail before backend creation. Agent tool must reject join/arm, hide pending bodies, require joined participation, and preserve attribution.
-- [ ] Implement `/messages` status/join/leave/arm/pause/send/inbox/prune/revoke using standard dialogs; show cancellation/dismissal and already-admitted limitations. No command text is automatically sent to the model.
-- [ ] Run extension and rendering tests, including terminal-control text, narrow widths, leave/reload/tree events, and coexistence without altering loop extension state.
-- [ ] Commit `feat: expose human-controlled Pi peer messaging`.
+- [x] Test idle wakeup and busy injection using exact `{triggerTurn:true,deliverAs:'steer'}`, custom type, IDs/attempt token, one matching live receipt, foreign/history receipt rejection, callback coalescing, and disconnect failure.
+- [x] Run runtime tests red; implement generation fencing and callback lifecycle; rerun green.
+- [x] Capture actual extension registration in tests and exercise command handlers with scripted TUI responses. Non-TUI modes must fail before backend creation. Agent tool must reject join/arm, hide pending bodies, require joined participation, and preserve attribution.
+- [x] Implement `/messages` status/join/leave/arm/pause/send/inbox/prune/revoke using standard dialogs; show cancellation/dismissal and already-admitted limitations. No command text is automatically sent to the model.
+- [x] Run extension and rendering tests, including terminal-control text, narrow widths, leave/reload/tree events, and coexistence without altering loop extension state.
+- [x] Commit `feat: expose human-controlled Pi peer messaging`.
 
 ### Task 4: Integration, review, and bounded cheap-model smoke tests
 
 **Files:** modify root package.json/package-lock.json, tsconfig.json, tests/pi-package-dependencies.test.mjs, settings and installer templates, .github/workflows/check.yml, README.md; create pi-messaging/README.md and scripts/live-smoke.mjs.
 
-- [ ] Update package contract tests first to require pi-messaging peers/test script/workspace inclusion; observe failure, then update manifests/templates. Keep Pi 0.82.0 overrides unchanged and use `npm install --ignore-scripts` for the lockfile.
-- [ ] Add a CI broker gate with pinned nats-server; normal offline unit tests must clearly distinguish skipped broker/live tests from passing coverage.
-- [ ] Document setup, starting/stopping the explicit broker, first join/arm flow, recovery, retention, threat boundary, protocol and test commands. Replace the long historical spec with a concise current design plus link to Git history.
-- [ ] Run `npm test`, `npm run typecheck`, `npm run lint:shell`, `npm run check`, and broker tests with NATS_SERVER set. Exercise Node 22.19 and the CI Node 24 runtime for the new package. Check standalone production dependency resolution.
-- [ ] Use the installed Pi SDK or real TUI subprocesses for a two-session live smoke with only peer_message enabled, explicit fake-human join/arm setup isolated in the test harness, allowance 2, short responses and a cheap authenticated model. Default live tests off; require explicit env opt-in, deadline, turn/token cap and estimated-cost cap. Report actual model/cost and whether full TUI or SDK adapter was tested.
-- [ ] Review failure paths independently of happy-path tests; add regressions for discovered bugs before fixing. Run final verification again and commit.
-- [ ] Leave the branch unmerged/unpushed and preserve the worktree for review. Report exact test results, costs, known limitations, and setup commands; do not claim model task completion from a message receipt.
+- [x] Update package contract tests first to require pi-messaging peers/test script/workspace inclusion; observe failure, then update manifests/templates. Keep Pi 0.82.0 overrides unchanged and use `npm install --ignore-scripts` for the lockfile.
+- [x] Add a CI broker gate with pinned nats-server; normal offline unit tests must clearly distinguish skipped broker/live tests from passing coverage.
+- [x] Document setup, starting/stopping the explicit broker, first join/arm flow, recovery, retention, threat boundary, protocol and test commands. Replace the long historical spec with a concise current design plus link to Git history.
+- [x] Run `npm test`, `npm run typecheck`, `npm run lint:shell`, `npm run check`, and broker tests with NATS_SERVER set. Exercise Node 22.19 and the CI Node 24 runtime for the new package. Check standalone production dependency resolution.
+- [x] Use the installed Pi SDK or real TUI subprocesses for a two-session live smoke with only peer_message enabled, explicit fake-human join/arm setup isolated in the test harness, allowance 2, short responses and a cheap authenticated model. Default live tests off; require explicit env opt-in, deadline, turn/token cap and estimated-cost cap. Report actual model/cost and whether full TUI or SDK adapter was tested.
+- [x] Review failure paths independently of happy-path tests; add regressions for discovered bugs before fixing. Run final verification again.
+- [x] Complete the final signed integration commit. The first attempt was blocked by a missing SSH-agent socket. Agent forwarding was restored, all 121 tests and repository checks were rerun, and the integration was finalized using the configured `dd-gitsign` signer without disabling signing.
+- [x] Leave the branch unmerged/unpushed and preserve the worktree for review. Report exact test results, costs, known limitations, and setup commands; do not claim model task completion from a message receipt.
 
 ## Evidence log
+
+Implementation and review are complete. See [verification/review notes](../reviews/2026-09-08-pi-messaging.md) and [operational README](../../../pi-messaging/README.md). Send-time maintenance was chosen instead of mutating storage during status/reader calls. The independent review's unsupported suggestions were checked and rejected with evidence. Real SDK smoke tests passed with Gemini 3 Flash on both Pi versions; the terminal UI itself was not automated.
 
 - Baseline: repository aggregate `npm test` and `npm run typecheck` passed in `.worktrees/pi-messaging` before implementation.
 - nats-server 2.14.6 Linux amd64 archive checksum verified against official release SHA256SUMS: `61c3d55f69f61ec616b75782250936445f2819e9e5f2ae6159b10a31abd2200c`; binary is temporary, not globally installed.

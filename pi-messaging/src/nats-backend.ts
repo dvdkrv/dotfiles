@@ -47,6 +47,7 @@ class NatsBackend implements MessagingBackend {
   private fetching = false;
   private joining = false;
   private membershipGeneration = 0;
+  private lastMaintenance = 0;
   private subscriptions = new Set<Subscription>();
   constructor(nc: NatsConnection, js: JetStreamClient, jsm: JetStreamManager, kv: KV, authorityId: string) {
     this.nc = nc; this.js = js; this.jsm = jsm; this.kv = kv; this.authorityId = authorityId;
@@ -115,7 +116,13 @@ class NatsBackend implements MessagingBackend {
     const peer = this.participant; this.participant = undefined; this.consumer = undefined;
     if (!peer || this.closed) return;
     await this.change(s => policy.leavePeer(s, peer.id));
-    await this.io(() => this.jsm.consumers.delete(STREAM, consumerName(peer.id)));
+    await this.deleteConsumer(consumerName(peer.id));
+  }
+  private async deleteConsumer(name: string): Promise<void> {
+    await this.io(async () => {
+      try { await this.jsm.consumers.delete(STREAM, name); }
+      catch (error) { if (!apiCode(error, 10014)) throw error; }
+    });
   }
   private joined(): Peer { if (!this.participant) policy.fail('participation', 'Explicitly join a messaging group first'); return this.participant; }
   async heartbeat(displayName?: string): Promise<void> { const p = this.joined(); await this.change(s => policy.heartbeat(s, p.id, displayName)); if (displayName) p.displayName = displayName; }
@@ -123,6 +130,12 @@ class NatsBackend implements MessagingBackend {
   async pause(ref: GroupRef): Promise<void> { await this.change(s => policy.pause(s, ref)); }
   async send(input: SendInput, requestKey: string): Promise<MessageStatus> {
     const p = this.joined(); policy.validateInput(input);
+    if (Date.now() - this.lastMaintenance > 60000) {
+      const { state } = await this.snapshot();
+      policy.activePeer(state, p.id);
+      await this.prune(policy.refOf(state.groups[p.groupId]), true, Date.now() - 7 * 86400000);
+      this.lastMaintenance = Date.now();
+    }
     const m = await this.change(s => policy.prepareMessage(s, p.id, input, requestKey));
     // An idempotent retry of an attempted/terminal message must not republish it.
     if (m.state !== 'queued') return m;
@@ -133,7 +146,7 @@ class NatsBackend implements MessagingBackend {
         const stored = await this.io(() => this.jsm.streams.getMessage(STREAM, { last_by_subj: subject(m) }));
         if (!stored) { this.failed = true; policy.fail('uncertain', 'Conflicting publication disappeared; inspect messaging state'); }
         policy.validateEnvelope(stored.json<Envelope>(), policy.newLedger(this.authorityId), m);
-      } else { this.failed = true; throw new MessagingError('uncertain', 'Message publication uncertain; metadata retained. Inspect inbox or retry the same request after reconnecting.'); }
+      } else { this.failed = true; throw new MessagingError('uncertain', 'Message publication uncertain; metadata retained. Inspect the old inbox before explicitly composing a new message; do not assume resending is safe.'); }
     }
     this.notify(); return m;
   }
@@ -178,17 +191,28 @@ class NatsBackend implements MessagingBackend {
   async resolveMessage(ref: GroupRef, id: string, state: 'canceled' | 'dismissed'): Promise<void> { await this.change(s => policy.resolveMessage(s, ref, id, state)); }
   async revoke(ref: GroupRef, id: string): Promise<void> {
     await this.change(s => { policy.groupOf(s, ref); if (!Object.hasOwn(s.peers, id) || s.peers[id].groupId !== ref.id) policy.fail('missing', 'Peer not in group'); policy.leavePeer(s, id); });
-    await this.io(() => this.jsm.consumers.delete(STREAM, consumerName(id)));
+    await this.deleteConsumer(consumerName(id));
   }
   async prune(ref: GroupRef, execute = false, before = Infinity): Promise<string[]> {
     const { state } = await this.snapshot(); const ids = policy.prunable(state, ref, before);
     if (!execute) return ids;
     for (const id of ids) await this.io(() => this.jsm.streams.purge(STREAM, { filter: subject(state.messages[id]) }));
+    const consumers = await this.io(async () => {
+      const names: string[] = [];
+      for await (const info of this.jsm.consumers.list(STREAM)) if (/^peer_[0-9a-f]{32}$/.test(info.name)) names.push(info.name);
+      return names;
+    });
+    // Read AFTER enumeration: a newly joined peer's ledger entry precedes its consumer.
+    // Inactive identities never become active again; stale-but-active peers need human revocation.
+    const current = (await this.snapshot()).state;
+    const active = new Set(Object.values(current.peers).filter(p => p.active).map(p => consumerName(p.id)));
+    for (const name of consumers) if (!active.has(name)) await this.deleteConsumer(name);
     await this.change(s => {
+      if (!Object.hasOwn(s.groups, ref.id)) return;
       for (const id of policy.prunable(s, ref, before)) if (ids.includes(id)) delete s.messages[id];
       const usedPeers = new Set(Object.values(s.messages).flatMap(m => [m.senderPeerId, m.recipientPeerId]));
       for (const p of Object.values(s.peers)) if (p.groupId === ref.id && !p.active && !usedPeers.has(p.id)) delete s.peers[p.id];
-      if (!Object.values(s.peers).some(p => p.groupId === ref.id) && !Object.values(s.messages).some(m => m.groupId === ref.id)) delete s.groups[ref.id];
+      if (before === Infinity && !Object.values(s.peers).some(p => p.groupId === ref.id) && !Object.values(s.messages).some(m => m.groupId === ref.id)) delete s.groups[ref.id];
     });
     return ids;
   }

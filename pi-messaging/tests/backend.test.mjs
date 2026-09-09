@@ -36,7 +36,7 @@ test('real queue: opt-in, shared allowance, exact envelope, idempotency and term
   assert.equal((await a.listMessages(g)).length, 3);
 });
 
-test('concurrent send requests publish one body; acknowledgment loss/redelivery does not repeat admission', async t => {
+test('concurrent sends preserve one identity and metadata reads cannot change allowance', async t => {
   const f = await fixture(t); if (!f) return;
   const { a, b, g } = f;
   const messages = await Promise.all(Array.from({ length: 8 }, () => a.send({ toPeerId: b.peer.id, text: 'once' }, 'same-call')));

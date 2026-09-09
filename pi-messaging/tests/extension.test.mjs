@@ -10,6 +10,7 @@ function fixture(t) {
   const state = p.newLedger(randomUUID()); const group = p.createGroup(state, 'review');
   const other = p.joinPeer(state, group, { sessionId: 'other', displayName: 'Other' });
   const events = new Map(); const commands = new Map(); const tools = new Map(); const renderers = new Map();
+  const bodies = new Map();
   const delivered = []; const notices = []; const statuses = []; const confirmations = []; const connectCalls = [];
   let peer; let closed = false;
   const backend = {
@@ -20,8 +21,12 @@ function fixture(t) {
     leave: async () => { if (peer) p.leavePeer(state, peer.id); peer = undefined; }, close: async () => { closed = true; },
     heartbeat: async name => { if (peer) p.heartbeat(state, peer.id, name); }, onChange: () => () => {}, reserve: async () => null,
     arm: async (g, limit) => p.arm(state, g, limit), pause: async g => p.pause(state, g),
-    send: async (input, key) => p.prepareMessage(state, peer.id, input, key),
-    listMessages: async g => Object.values(state.messages).filter(m => m.groupId === g.id),
+    send: async (input, key) => { const m = p.prepareMessage(state, peer.id, input, key); bodies.set(m.id, input.text); return m; },
+    listMessages: async g => Object.values(state.messages).filter(m => m.groupId === g.id).sort((a, b) => b.sequence - a.sequence),
+    readBody: async (_g, id) => p.envelope(state, state.messages[id], bodies.get(id)),
+    resolveMessage: async (g, id, action) => p.resolveMessage(state, g, id, action),
+    revoke: async (_g, id) => p.leavePeer(state, id),
+    prune: async (g, execute) => { const ids = p.prunable(state, g, Infinity); if (execute) for (const id of ids) delete state.messages[id]; return ids; },
   };
   const pi = {
     on: (name, handler) => events.set(name, handler), registerCommand: (name, command) => commands.set(name, command),
@@ -91,6 +96,50 @@ test('blank display name follows session renames while explicit nicknames stay u
   assert.equal(f.backend.peer.displayName, 'Local');
   await f.events.get('session_info_changed')({ name: 'Renamed' }, f.ctx);
   assert.equal(f.backend.peer.displayName, 'Renamed');
+  await f.commands.get('messages').handler('leave', f.ctx);
+  f.ctx.ui.input = async () => 'Explicit';
+  await f.commands.get('messages').handler('join review', f.ctx);
+  await f.events.get('session_info_changed')({ name: 'Another name' }, f.ctx);
+  assert.equal(f.backend.peer.displayName, 'Explicit');
+});
+
+test('human composition queues as the joined peer and inbox viewing/cancellation never enters model context', async t => {
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  await f.commands.get('messages').handler('send', f.ctx);
+  const m = Object.values(f.state.messages)[0]; assert.equal(m.senderPeerId, f.backend.peer.id);
+  const choices = ['message', 'View body', 'message', 'Cancel queued message', 'Close'];
+  let views = 0;
+  f.ctx.ui.select = async (_title, options) => { const choice = choices.shift(); return choice === 'message' ? options[0] : choice; };
+  f.ctx.ui.editor = async (_title, text) => { assert.equal(text, 'human text'); views++; return 'must not be sent'; };
+  await f.commands.get('messages').handler('inbox', f.ctx);
+  assert.equal(views, 1); assert.equal(m.state, 'canceled'); assert.equal(f.delivered.length, 0);
+  assert.equal(Object.keys(f.state.messages).length, 1);
+});
+
+test('human dismissal, revocation and pruning preserve spent allowance', async t => {
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  await f.commands.get('messages').handler('arm 2', f.ctx);
+  const m = p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'uncertain' }, 'other-send');
+  p.admit(f.state, f.backend.peer.id, m.id);
+  const choices = ['message', 'Dismiss uncertain attempt', 'Close'];
+  f.ctx.ui.select = async (_title, options) => { const choice = choices.shift(); return choice === 'message' ? options[0] : choice; };
+  await f.commands.get('messages').handler('inbox', f.ctx);
+  assert.equal(m.state, 'dismissed');
+  f.ctx.ui.select = async (_title, options) => options[0];
+  await f.commands.get('messages').handler('revoke', f.ctx);
+  assert.equal(f.state.peers[f.other.id].active, false);
+  await f.commands.get('messages').handler('prune', f.ctx);
+  assert.equal(Object.keys(f.state.messages).length, 0);
+  assert.equal(f.state.groups[f.group.id].used, 1);
+});
+
+test('a late join dialog cannot mutate participation after tree navigation', async t => {
+  const f = fixture(t); let release; let begun; const started = new Promise(r => { begun = r; });
+  f.ctx.ui.input = async () => { begun(); return new Promise(r => { release = r; }); };
+  const joining = f.commands.get('messages').handler('join review', f.ctx); await started;
+  await f.events.get('session_before_tree')({}, f.ctx); release('Too late');
+  await assert.rejects(joining, /session change/i);
+  assert.equal(f.backend.peer, undefined); assert.equal(Object.keys(f.state.peers).length, 1);
 });
 
 test('canceled join confirmation makes no participation; renderer escapes terminal controls and wraps narrow widths', async t => {

@@ -15,6 +15,7 @@ test('local pi extension packages declare runtime peer dependencies they import'
     'pi-task/package.json': ['@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', '@earendil-works/pi-tui', 'typebox'],
     'pi-loop-package/package.json': ['@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', 'typebox'],
     'pi-claude-bridge/package.json': ['@earendil-works/pi-coding-agent', '@earendil-works/pi-tui'],
+    'pi-messaging/package.json': ['@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', '@earendil-works/pi-tui', 'typebox'],
   };
 
   for (const [path, deps] of Object.entries(expected)) {
@@ -42,6 +43,7 @@ test('packages with TypeScript-importing tests pin jiti as a dev dependency', ()
     'pi-task/package.json',
     'pi-loop-package/package.json',
     'pi-claude-bridge/package.json',
+    'pi-messaging/package.json',
   ]) {
     const devDeps = pkg(path).devDependencies ?? {};
     assert.equal(devDeps.jiti, '2.7.0', `${path} should pin jiti for tests that import TypeScript`);
@@ -108,6 +110,7 @@ test('root workspace defines reproducible aggregate validation', () => {
     'pi-task',
     'pi-loop-package',
     'pi-claude-bridge',
+    'pi-messaging',
   ]);
   for (const script of ['test', 'typecheck', 'lint:shell', 'check']) {
     assert.equal(typeof root.scripts?.[script], 'string', `root should define npm run ${script}`);
@@ -123,6 +126,7 @@ test('every local Pi package has a runnable test script', () => {
     'pi-task/package.json',
     'pi-loop-package/package.json',
     'pi-claude-bridge/package.json',
+    'pi-messaging/package.json',
   ]) {
     assert.equal(pkg(path).scripts?.test, 'node --test tests/*.test.mjs', `${path} should run Node tests`);
   }
