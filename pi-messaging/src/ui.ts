@@ -54,7 +54,7 @@ export async function handleMessages(args: string, ctx: ExtensionCommandContext,
     if (!ctx.sessionManager.getSessionFile()) fail('participation', 'Joining requires a saved Pi session, not ephemeral mode');
     const summary = await b.getGroupSummary(group); if (!summary) fail('missing', 'Group no longer exists');
     const sessionId = ctx.sessionManager.getSessionId();
-    if (!await ask(ctx.ui.confirm('Join messaging group?', `${group.label}: ${summary.mode}, ${summary.remaining} admissions remaining. Default name: ${safeText(sessionId)}; the agent can choose its role name during normal work. When armed, peers may wake this session or steer it while busy. Joining does not grant allowance.`))) return;
+    if (!await ask(ctx.ui.confirm('Join messaging group?', `${group.label}: ${summary.mode}, ${summary.remaining} admissions remaining. Default name: ${safeText(sessionId)}; the agent can choose its role name during normal work. When armed, peers may wake this session when idle; incoming messages wait for busy work to finish. Joining does not grant allowance.`))) return;
     await b.join(group, { sessionId, displayName: sessionId });
     controls.joined(group); ctx.ui.notify(`Joined ${group.label} as ${peerLabel({ sessionId, displayName: sessionId })}. Use /messages arm to explicitly grant automatic work.`, 'info');
   } else if (command === 'arm') {

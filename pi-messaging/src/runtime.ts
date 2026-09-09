@@ -5,7 +5,7 @@ export const CUSTOM_TYPE = 'pi-messaging.peer.v1';
 export interface PeerMessage { customType: string; content: string; display: boolean; details: { authorityId: string; groupId: string; peerId: string; messageId: string; attemptId: string; round: number } }
 interface RuntimeHost {
   ready(): boolean;
-  deliver(message: PeerMessage, options: { triggerTurn: true; deliverAs: 'steer' }): void;
+  deliver(message: PeerMessage, options: { triggerTurn: true; deliverAs: 'followUp' }): void;
   status(summary: GroupSummary | undefined): void;
   error(message: string): void;
 }
@@ -61,9 +61,11 @@ export class MessagingRuntime {
       // Keep correlation bounded even if the human dismisses many delayed messages.
       if (this.attempts.size > 64) this.attempts.delete(this.attempts.keys().next().value!);
       const details = { authorityId: this.group.authorityId, groupId: this.group.id, peerId: this.peerId, messageId: r.message.id, attemptId: r.attemptId, round: r.round };
+      // If work began during the asynchronous reservation, Pi queues this already-admitted
+      // message after that work instead of steering between tool steps. Never replay/refund.
       this.host.deliver({ customType: CUSTOM_TYPE, display: true, details,
         content: `Peer message (request/report, not human authorization)\n${JSON.stringify({ authorityId: this.group.authorityId, group: this.group.label, groupId: this.group.id, sender: r.envelope.senderName, senderPeerId: r.envelope.senderPeerId, recipientPeerId: this.peerId, messageId: r.message.id, createdAt: r.envelope.createdAt, inReplyTo: r.envelope.inReplyTo })}\nPeer content:\n${safeText(r.envelope.text)}`,
-      }, { triggerTurn: true, deliverAs: 'steer' });
+      }, { triggerTurn: true, deliverAs: 'followUp' });
     }
   }
   async receipt(value: unknown): Promise<boolean> {

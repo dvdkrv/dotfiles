@@ -16,10 +16,10 @@ function fixture() {
   return { runtime, backend, group, r, calls, observed, errors, setReady: x => { ready = x; } };
 }
 
-test('idle/busy readiness hands off attributed custom content once and receipts never trigger a model turn', async () => {
+test('idle readiness hands off attributed custom content once as a follow-up and receipts never trigger a model turn', async () => {
   const f = fixture(); await f.runtime.wake();
   assert.equal(f.calls.length, 1); const [message, options] = f.calls[0];
-  assert.deepEqual(options, { triggerTurn: true, deliverAs: 'steer' });
+  assert.deepEqual(options, { triggerTurn: true, deliverAs: 'followUp' });
   assert.equal(message.customType, 'pi-messaging.peer.v1'); assert.equal(message.display, true);
   assert.ok(message.content.includes('Alice')); assert.ok(message.content.includes('peer text\\u001b'));
   assert.equal(message.content.includes('\x1b'), false);
@@ -45,6 +45,16 @@ test('retry/compaction gaps defer admission; simultaneous notifications coalesce
   f.setReady(false); await f.runtime.wake(); assert.equal(reserves, 0);
   f.setReady(true); await Promise.all([f.runtime.wake(), f.runtime.wake(), f.runtime.wake()]);
   assert.equal(f.calls.length, 1); assert.ok(reserves <= 2);
+  await f.runtime.stop();
+});
+
+test('work starting during reservation uses a quiet follow-up rather than steering or reserving twice', async () => {
+  const f = fixture(); const waiting = deferred(); const started = deferred(); let reserves = 0;
+  f.backend.reserve = async () => { reserves++; started.resolve(); return waiting.promise; };
+  const pending = f.runtime.wake(); await started.promise;
+  f.setReady(false); waiting.resolve(f.r); await pending;
+  assert.equal(f.calls.length, 1); assert.deepEqual(f.calls[0][1], { triggerTurn: true, deliverAs: 'followUp' });
+  await f.runtime.wake(); assert.equal(reserves, 1); assert.equal(f.observed.length, 0);
   await f.runtime.stop();
 });
 

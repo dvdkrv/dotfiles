@@ -20,6 +20,8 @@ Add `peer_message` action `rename` with `displayName`. It updates only the curre
 
 A synchronous `context` hook adds one ephemeral, explicitly extension-origin identity/guidance message only while joined, connected, in TUI mode, and with `peer_message` enabled. It uses local membership metadata only: no broker polling, no model calls, no injected wakeup, and no persistent session entry. It tells the agent to discover peers and choose a concise role name during normal work, maintain it when its assignment changes, and avoid repeated polling, renaming, greetings, or invented responsibilities. Metadata is not promoted into system instructions. Remove any stale copy of this extension's identity context before appending the current one; omit it after detachment.
 
+The later approved [quiet follow-up](2026-09-09-pi-messaging-quiet-design.md) bounds naming reminders to the first two eligible requests and supplies compact identity metadata afterward, rather than repeating the full guidance indefinitely. Idle-gated follow-up delivery replaces steering busy agents.
+
 Joining stays human-only; arming stays human-only; allowances, attempts, message envelopes, receipts, and uncertain-delivery rules are unchanged. Ordinary discovery/rename tool calls can incur normal agent-turn tokens, but the extension starts no naming-only inference.
 
 ## Validation

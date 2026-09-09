@@ -70,6 +70,21 @@ Validation: **137 aggregate tests / 55 messaging tests**, zero failures/skips; t
 
 Existing user sessions and the hands-on broker remain untouched. Loading the fix requires `/reload` and explicit rejoining; re-arming is not needed just to install the fix. Rediscover routing IDs after rejoining; do not reuse IDs from the earlier transcript.
 
+## 2026-09-09 quiet-delivery follow-up
+
+The user approved quiet as the new default. Admission readiness now uses only Pi's full-run `ctx.isIdle()`; the old active-run override is removed. Delivery uses `followUp`, not `steer`. Busy messages normally remain in the broker without spending allowance. If work starts during an in-flight admission, the already-spent message waits in Pi's follow-up queue until work finishes. Generation/peer fencing, receipt correlation, no replay/refund, and human-only controls are unchanged.
+
+Outgoing result/guidance is enqueue-and-continue: no implied waiting, polling, or periodic check-ins. Quiet-flow onboarding appears once. Naming hints are bounded to two initial eligible model requests while unnamed; subsequent requests carry compact current identity only, and a new agent run does not reset onboarding. The initial one-request implementation passed delivery tests but regressed live naming: the transient hint vanished between discovery and rename. Provider-boundary tracing established that sequence; a test-first two-request window restored naming while keeping reminders bounded. Existing live naming assertions were retained.
+
+Validation:
+
+- **142 aggregate tests / 60 messaging tests**, zero failures/skips. The new real-SDK/private-broker tests use a scripted provider and two deferred work steps. They prove busy queuing with no admission, no peer content between work steps, automatic delivery after completion, and the already-admitted follow-up race. These tests failed under the old steering implementation and passed after the change.
+- The SDK quiet tests pass on Pi 0.82.0 and 0.84.1; installed Pi's combined extension/quiet suite passes all 28 tests. All 60 messaging tests pass on Node 22.19.0 and 24.20.0. Typecheck, ShellCheck, rendered configuration/Chezmoi checks, headless Neovim, and diff checks pass.
+- Bounded live Flash tests passed on Pi 0.82.0 (8 requests) and 0.84.1 (7 requests), discovering the recipient, choosing initiator/responder role names, observing two admissions, and leaving FOLLOWUP queued. Naming guidance was bounded and did not recur for later messages. Combined estimated usage for the two passing runs: **$0.00990** at published rates; diagnostic runs added usage and gateway billing is unverified.
+- A separate read-only Flash review (approximately **$0.01516**) found no critical/important defects. Its two minor notes describe existing/intentional behavior: the bounded receipt-correlation FIFO is unchanged, and the initial naming window may expire with the session-ID default still in place. Neither grants authority, replays a message, or prevents later self-renaming. Claims about suppressing all unsolicited messaging are not treated as an enforced guarantee; outgoing behavior is guidance, while idle admission and follow-up routing are implemented controls.
+
+An agent blocked on a reply must yield rather than keep a polling/sleep loop running. Another extension's continuous loop can delay an idle boundary and remains independently controlled. No urgency mode, coordinator engine, automatic session launch/join, broker restart, or live-user message operation was added.
+
 ## Remaining limits
 
 - No real-terminal automation or macOS execution was performed; SDK UI callbacks, rendering, and Linux processes were tested.

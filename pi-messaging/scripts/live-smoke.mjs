@@ -16,7 +16,8 @@ const { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager,
 const jiti = createJiti(import.meta.url);
 const { registerMessaging } = await jiti.import('../extensions/messaging.ts');
 const { connectBackend } = await jiti.import('../src/nats-backend.ts');
-const cleanups = []; const sessions = []; const failures = []; const receipts = []; const usage = []; const toolCalls = [];
+const { NAMING_GUIDANCE } = await jiti.import('../src/identity.ts');
+const cleanups = []; const sessions = []; const failures = []; const receipts = []; const usage = []; const toolCalls = []; const namingHints = [];
 const root = await mkdtemp(join(tmpdir(), 'pi-messaging-live-'));
 let requests = 0; let estimatedUpperBound = 0; let timedOut = false;
 const timer = setTimeout(() => { timedOut = true; for (const session of sessions) void session.abort(); }, 90000);
@@ -35,6 +36,7 @@ try {
   const originalStream = modelRuntime.streamSimple.bind(modelRuntime);
   modelRuntime.streamSimple = (m, context, options) => {
     if (timedOut || ++requests > 16 || Buffer.byteLength(JSON.stringify(context)) > 20000) throw new Error('Live smoke request/context limit exceeded');
+    namingHints.push(JSON.stringify(context.messages).includes(NAMING_GUIDANCE));
     estimatedUpperBound += (20000 * Math.max(rates.input, rates.cacheRead, rates.cacheWrite) + 512 * rates.output) / 1e6;
     if (estimatedUpperBound > 0.50) throw new Error('Live smoke estimated-cost cap exceeded');
     return originalStream(m, context, { ...options, maxTokens: 512, reasoning: 'off', maxRetries: 0 });
@@ -100,7 +102,8 @@ try {
   const bodies = await Promise.all(ordered.map(m => observer.readBody(group, m.id)));
   assert.deepEqual(bodies.map(b => b.text), ['PING', 'PONG', 'FOLLOWUP']);
   const namedPeers = await observer.peers(group);
-  console.log(JSON.stringify({ checkpoint: 'protocol complete', requests, roleNames: namedPeers.map(p => p.displayName), toolCalls }, null, 2));
+  assert.ok(namingHints.filter(Boolean).length <= 4, 'At most two initial naming hints per participation');
+  console.log(JSON.stringify({ checkpoint: 'protocol complete', requests, namingHints, roleNames: namedPeers.map(p => p.displayName), toolCalls }, null, 2));
   for (const [index, name] of ['A', 'B'].entries()) {
     const peer = namedPeers.find(p => p.sessionId === sessions[index].sessionId); assert.ok(peer);
     assert.notEqual(peer.displayName, peer.sessionId, 'Role naming must happen without a user naming instruction');

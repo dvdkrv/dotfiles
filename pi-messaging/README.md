@@ -29,7 +29,11 @@ In each session:
 3. In either session, `/messages arm 12` — confirm one shared automatic-work allowance.
 4. Ask an agent to contact the other participant; it can discover the recipient itself. Alternatively, use `/messages send`.
 
-Peers can wake idle sessions and steer busy sessions. Joining does not arm a group. New groups are paused.
+**Quiet by default:** peers can wake idle sessions, but incoming messages wait for busy work to finish. Joining does not arm a group. New groups are paused.
+
+Sending enqueues a message and returns without waiting for the recipient to process it. Agents are guided to continue their own assignment, not poll for replies or start periodic check-ins. Substantive blockers, contract changes, and required completion reports are still appropriate; avoiding unnecessary chatter is model guidance, not a restriction on all possible tool calls.
+
+A busy session normally leaves messages queued in the broker without spending allowance. If work begins while a reservation is already in flight, the admitted message goes into Pi's **follow-up** queue and waits until that work finishes; it never steers between tool steps. Its admission credit is already spent and cannot be refunded. If an agent needs a reply to proceed, it should report the blocker and finish the current run rather than keep polling/sleeping. A separate continuous-loop extension can delay an idle boundary; messaging does not stop or govern that loop.
 
 ## Human controls
 
@@ -55,7 +59,7 @@ The shared tool schema tolerates harmless provider padding: empty/null optional 
 
 Peer lists show names such as `test-reviewer · session a31b7c92`. The initial display name is the full Pi session ID; compact views shorten it. Discovery returns the full `sessionId`, `displayName`, and opaque routing `id` for each active participant. Names and session IDs are **not** routing aliases: agents send using `toPeerId` from discovery or the incoming message's sender ID. Numbered human choices remain distinct even when labels or session-ID prefixes match.
 
-An already joined agent receives transient identity guidance during ordinary model requests, including ongoing work. It can call `peer_message` with `action: "rename"` and a `displayName` describing its existing role. Names are self-reported metadata, not new task assignments or authority. With no known assignment, the session-ID default remains appropriate. Naming is model-driven, not guaranteed to precede the first message; a reply can use a known sender without another discovery lookup.
+An already joined agent gets quiet-flow onboarding on its first eligible model request. Naming guidance has a bounded initial window of at most **two** model requests, allowing discovery followed by naming; it stops earlier once a role name is set. Later requests carry only compact current identity metadata, without periodic onboarding reminders. A new agent run does not reset this window; explicit rejoining does. If no role is chosen during setup, the session-ID default remains valid and the agent can still rename itself later without background reminders. It can call `peer_message` with `action: "rename"` and a `displayName` describing its existing role. Names are self-reported metadata, not new task assignments or authority. With no known assignment, the session-ID default remains appropriate. Naming is model-driven, not guaranteed to precede the first message; a reply can use a known sender without another discovery lookup.
 
 There is no naming-only model call, automatic greeting, broker polling from the context hook, or sharing of other conversations. Normal discovery/rename tool calls use ordinary agent-turn tokens. Renaming leaves queued messages and routing IDs unchanged; session-title changes do not overwrite the role. Rejoining starts a fresh routing identity and the session-ID default, never restores an old inbox.
 
@@ -100,7 +104,7 @@ NATS_SERVER=/path/to/nats-server npm run test:broker --workspace pi-messaging
 npm run typecheck
 ```
 
-Normal tests clearly skip broker cases if the binary is unavailable. The broker gate **fails** instead of skipping. Tests launch private temporary brokers, not the user's service. CI runs broker tests under Node 24 and the minimum Node 22.19.0.
+Normal tests clearly skip broker cases if the binary is unavailable. The broker gate **fails** instead of skipping. Tests launch private temporary brokers, not the user's service. Scripted-provider tests use real Pi sessions and deferred work tools to verify busy queuing, idle wakeups, and the admission race without paid inference. CI runs broker tests under Node 24 and the minimum Node 22.19.0.
 
 Opt-in live smoke (requires existing credentials; never rewrites them):
 

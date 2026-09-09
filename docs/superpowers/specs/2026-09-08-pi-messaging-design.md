@@ -6,14 +6,16 @@ Scope: messaging only. Project tracking, worktree lifecycle changes, knowledge s
 
 ## User-visible contract
 
-1. **Explicit participation.** Independently launched, saved TUI sessions join a named group. When armed, messages can wake idle sessions and steer busy sessions. The extension never launches agents.
-2. **Finite automatic work.** One persistent allowance is shared by the whole group: default 12 admissions, human-selectable 1–100. Every admission counts, including busy-session injection. Replies, receipts, elapsed time, restarts, and new threads never grant credits. Only a confirmed human command starts a new round, replacing rather than accumulating unused allowance.
+1. **Explicit participation.** Independently launched, saved TUI sessions join a named group. When armed, messages can wake idle sessions; busy sessions defer incoming messages until their current work finishes. The extension never launches agents.
+2. **Finite automatic work.** One persistent allowance is shared by the whole group: default 12 admissions, human-selectable 1–100. Every admission counts, including one queued in Pi if work starts during an in-flight reservation. Replies, receipts, elapsed time, restarts, and new threads never grant credits. Only a confirmed human command starts a new round, replacing rather than accumulating unused allowance.
 3. **Conservative uncertain delivery.** At most one unresolved handoff per recipient. An admitted message is never automatically replayed or refunded, even when it might not have reached Pi. A human can inspect and dismiss an uncertain attempt to unblock the recipient. A receipt proves observation, not task completion.
 4. **Fresh membership after context changes.** Reload, restart, new/resumed/forked sessions, and tree navigation detach participation. Explicit rejoining creates a fresh identity. Old inboxes remain inspectable, not redirected.
 5. **Honest pause semantics.** Pause/leave prevent new admissions, but cannot recall messages already handed to Pi. These may still appear afterward.
 6. **Human control remains separate.** `/messages` provides join, leave, arm, pause, send, status, inbox, revoke, and prune. The model tool `peer_message` has peers, status, send, and self-only rename; it cannot inspect pending bodies or grant allowance. Peer text is not human authorization.
 
 The approved [session identity and role-naming follow-up](2026-09-09-pi-messaging-role-names-design.md) removes the join name prompt. Pi session ID is the default and stays visible beside a role-bearing name; agents can discover peers and rename only themselves during ordinary work. Names and session IDs are not routing aliases. Transient identity guidance triggers no inference or broker polling on its own, and renaming never redirects queued messages.
+
+The approved [quiet-delivery follow-up](2026-09-09-pi-messaging-quiet-design.md) replaces busy-session steering with idle-gated admission and follow-up delivery. Sending is enqueue-and-continue, with a bounded initial naming window and compact identity metadata afterward.
 
 This bounds messaging-driven admissions, not all work within an agent run or another extension's loop. It is not a sandbox against programs running as the same OS user.
 
@@ -33,8 +35,8 @@ The client packages are pinned to 3.4.0; nats-server 2.14.6 is pinned in CI. Nod
 
 1. Enqueue reserves idempotency metadata and quota, then publishes a versioned body with expected last subject sequence 0. Duplicate publication is rejected for the retained subject's lifetime. A crash between metadata reservation and publication can leave a visibly missing body; a human can cancel the queued reservation.
 2. A recipient obtains one body through its broker consumer. A ledger CAS checks active participation, group mode/allowance, and the recipient's unresolved-attempt gate, then records the attempt and increments the allowance together.
-3. Only the caller with a confirmed successful CAS receives a new reservation. Uncertain acknowledgments stop admission; rereading an attempted record does not grant permission to call Pi.
-4. The runtime rechecks its generation/peer after awaiting the reservation, then calls `pi.sendMessage` with a displayed custom peer message, `triggerTurn: true`, and `deliverAs: "steer"`, with no intervening await. It never uses `sendUserMessage`.
+3. The runtime starts reservations only while Pi reports idle. Only the caller with a confirmed successful CAS receives a new reservation. Uncertain acknowledgments stop admission; rereading an attempted record does not grant permission to call Pi.
+4. The runtime rechecks its generation/peer after awaiting the reservation, then calls `pi.sendMessage` with a displayed custom peer message, `triggerTurn: true`, and `deliverAs: "followUp"`, with no intervening await. If work began during reservation, Pi queues the already-admitted message after that work, never between tool steps. It never uses `sendUserMessage`.
 5. Broker acknowledgment is independent of model processing. Broker replay of an attempted/terminal record cannot produce another reservation. Matching live custom-message observation updates the ledger without triggering a model turn itself.
 
 A pause/revocation ordered before the admission CAS blocks it; one ordered after cannot retract it. A crash after commit but before the Pi call consumes an uncertain attempt without replay. This follows Pi's fire-and-forget dispatch API rather than pretending to provide exactly-once processing.
