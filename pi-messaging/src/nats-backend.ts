@@ -8,6 +8,7 @@ import * as policy from './policy.ts';
 const STREAM = 'PM_MESSAGES';
 const BUCKET = 'PM_CONTROL';
 const CHANGED = 'pm.changed';
+const ACK_WAIT_NS = 5_000_000_000;
 const subject = (m: MessageStatus) => `pm.message.${m.groupId}.${m.recipientPeerId}.${m.id}`;
 const consumerName = (peerId: string) => `peer_${peerId.replaceAll('-', '')}`;
 const apiCode = (error: unknown, code: number) => error instanceof JetStreamApiError && error.code === code;
@@ -121,13 +122,13 @@ class NatsBackend implements MessagingBackend {
     const name = consumerName(peerId); const filter = `pm.message.${ref.id}.${peerId}.*`;
     try {
       const info = await this.jsm.consumers.info(STREAM, name);
-      if (info.config.filter_subject !== filter || info.config.ack_policy !== AckPolicy.Explicit || info.config.deliver_policy !== DeliverPolicy.All || info.config.max_ack_pending !== 1) policy.fail('configuration', 'Unsafe or incompatible peer consumer configuration');
+      if (info.config.filter_subject !== filter || info.config.ack_policy !== AckPolicy.Explicit || info.config.deliver_policy !== DeliverPolicy.All || info.config.max_ack_pending !== 1 || info.config.ack_wait !== ACK_WAIT_NS) policy.fail('configuration', 'Unsafe or incompatible peer consumer configuration');
     } catch (error) {
       if (!apiCode(error, 10014)) {
         this.failed = true;
         throw error instanceof MessagingError ? error : new MessagingError('uncertain', `Broker operation failed or has an uncertain outcome; no automatic retry. Leave/rejoin after inspection. ${error instanceof Error ? error.message : String(error)}`);
       }
-      await this.io(() => this.jsm.consumers.add(STREAM, { durable_name: name, filter_subject: filter, ack_policy: AckPolicy.Explicit, deliver_policy: DeliverPolicy.All, max_ack_pending: 1, ack_wait: 5_000_000_000 }));
+      await this.io(() => this.jsm.consumers.add(STREAM, { durable_name: name, filter_subject: filter, ack_policy: AckPolicy.Explicit, deliver_policy: DeliverPolicy.All, max_ack_pending: 1, ack_wait: ACK_WAIT_NS }));
     }
     this.consumer = await this.io(() => this.js.consumers.get(STREAM, name));
   }
@@ -150,12 +151,12 @@ class NatsBackend implements MessagingBackend {
     this.joining = true;
     const generation = ++this.membershipGeneration;
     try {
+      await this.bindConsumer(ref, peerId);
+      if (generation !== this.membershipGeneration) { this.consumer = undefined; policy.fail('participation', 'Resume canceled by session departure'); }
       const record = await this.change(state => policy.resumePeer(state, ref, sessionId, peerId));
       const lease = { peerId: record.id, leaseId: record.leaseId };
-      if (generation !== this.membershipGeneration) { await this.change(state => policy.suspendPeer(state, lease)); policy.fail('participation', 'Resume canceled by session departure'); }
+      if (generation !== this.membershipGeneration) { await this.change(state => policy.suspendPeer(state, lease)); this.consumer = undefined; policy.fail('participation', 'Resume canceled by session departure'); }
       const peer = publicPeer(record); this.participant = { peer, lease };
-      await this.bindConsumer(ref, peer.id);
-      if (generation !== this.membershipGeneration) { await this.suspend(); policy.fail('participation', 'Resume canceled by session departure'); }
       return { ...peer };
     } finally { this.joining = false; }
   }

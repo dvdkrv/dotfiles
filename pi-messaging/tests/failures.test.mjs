@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, connect as tcpConnect } from 'node:net';
+import { fork } from 'node:child_process';
 import { once } from 'node:events';
 import { connect } from '@nats-io/transport-node';
 import { jetstreamManager, AckPolicy, DeliverPolicy } from '@nats-io/jetstream';
@@ -105,6 +106,27 @@ test('rotated lease fences every old backend operation without deactivating the 
   assert.equal(peer.active, true); assert.equal(peer.suspended, false);
   assert.equal((await f.a.listMessages(f.g)).some(item => item.requestKey === 'old-send'), false);
   assert.equal((await f.a.getGroupSummary(f.g)).used, 1);
+});
+
+test('a separately running old owner is fenced from every participant mutation after resume', { timeout: 15000 }, async t => {
+  const f = await fixture(t); if (!f) return;
+  const old = { ...f.b.peer }; await f.b.suspend();
+  const child = fork(new URL('./helpers/lease-contender.mjs', import.meta.url), { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  t.after(() => { if (child.connected) child.send({ action: 'close' }); child.kill(); });
+  const request = async message => { child.send(message); const [response] = await once(child, 'message'); return response; };
+  assert.equal((await request({ action: 'init', config: f.config, group: f.g, peerId: old.id, sessionId: 'b' })).ok, true);
+  await f.a.arm(f.g, 1); const message = await f.a.send({ toPeerId: old.id, text: 'old process attempt' }, 'old-process-attempt');
+  assert.deepEqual(await request({ action: 'reserve' }), { ok: true, messageId: message.id });
+  const kv = await new Kvm(f.nc).open('PM_CONTROL'); const entry = await kv.get('state'); const state = entry.json();
+  state.peers[old.id].lastSeen = Date.now() - 31_000; await kv.update('state', JSON.stringify(state), entry.revision);
+  const winner = await connectBackend(f.config); t.after(() => winner.close()); await winner.resume(f.g, old.id, 'b');
+  for (const action of ['heartbeat', 'rename', 'send', 'reserve', 'observe', 'suspend', 'leave']) {
+    const result = await request({ action, toPeerId: f.a.peer.id });
+    assert.equal(result.ok, false, `${action} unexpectedly succeeded`); assert.equal(result.code, 'participation');
+  }
+  const peer = (await f.a.peers(f.g)).find(candidate => candidate.id === old.id);
+  assert.equal(peer.active, true); assert.equal(peer.suspended, false); assert.equal(peer.displayName, old.displayName);
+  assert.equal((await f.a.listMessages(f.g)).length, 1); assert.equal((await f.a.getGroupSummary(f.g)).used, 1);
 });
 
 test('held pull with an old lease is not admitted and redelivers to the resumed owner', { timeout: 15000 }, async t => {

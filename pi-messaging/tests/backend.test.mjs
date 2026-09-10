@@ -6,6 +6,7 @@ import { once } from 'node:events';
 import { createJiti } from 'jiti';
 import { connect } from '@nats-io/transport-node';
 import { Kvm } from '@nats-io/kv';
+import { AckPolicy, DeliverPolicy, jetstreamManager } from '@nats-io/jetstream';
 import { brokerFixture } from './helpers/broker.mjs';
 const jiti = createJiti(import.meta.url);
 const { connectBackend } = await jiti.import('../src/nats-backend.ts');
@@ -83,6 +84,19 @@ test('suspended peer resumes the same role, routing inbox, and durable consumer'
   await f.a.arm(f.g, 1); const reservation = await resumed.reserve();
   assert.equal(reservation.message.id, queued.id); await resumed.observe(reservation);
   assert.equal((await resumed.getGroupSummary(f.g)).used, 1);
+});
+
+test('failed consumer validation leaves a resume candidate suspended', async t => {
+  const f = await fixture(t); if (!f) return;
+  const old = { ...f.b.peer }; await f.b.suspend();
+  const name = `peer_${old.id.replaceAll('-', '')}`;
+  const nc = await connect({ servers: f.config.server, token: f.config.token }); const jsm = await jetstreamManager(nc); t.after(() => nc.close());
+  await jsm.consumers.delete('PM_MESSAGES', name);
+  await jsm.consumers.add('PM_MESSAGES', { durable_name: name, filter_subject: `pm.message.${f.g.id}.${old.id}.*`, ack_policy: AckPolicy.Explicit, deliver_policy: DeliverPolicy.All, max_ack_pending: 1, ack_wait: 6_000_000_000 });
+  const resumed = await connectBackend(f.config); t.after(() => resumed.close());
+  await assert.rejects(resumed.resume(f.g, old.id, 'b'), /consumer configuration/i);
+  const candidate = (await f.a.peers(f.g)).find(peer => peer.id === old.id);
+  assert.equal(candidate.active, true); assert.equal(candidate.suspended, true);
 });
 
 test('attempted work remains unresolved and unrefunded when its peer resumes', async t => {
