@@ -13,11 +13,12 @@ const consumerName = (peerId: string) => `peer_${peerId.replaceAll('-', '')}`;
 const apiCode = (error: unknown, code: number) => error instanceof JetStreamApiError && error.code === code;
 
 /** Provisioning is only called by explicit broker bootstrap, never by a Pi tool. */
-export async function connectBackend(config: BrokerConfig, options: { initialize?: boolean } = {}): Promise<MessagingBackend> {
-  const nc = await connect({ servers: config.server, token: config.token, reconnect: false, timeout: 1500, name: 'pi-messaging' });
+export async function connectBackend(config: BrokerConfig, options: { initialize?: boolean; timeoutMs?: number } = {}): Promise<MessagingBackend> {
+  const timeout = options.timeoutMs ?? 1500;
+  const nc = await connect({ servers: config.server, token: config.token, reconnect: false, timeout, name: 'pi-messaging' });
   try {
-    const js = jetstream(nc, { timeout: 1500 });
-    const jsm = await jetstreamManager(nc, { timeout: 1500 });
+    const js = jetstream(nc, { timeout });
+    const jsm = await jetstreamManager(nc, { timeout });
     const kvm = new Kvm(js);
     if (options.initialize) {
       await jsm.streams.add({ name: STREAM, subjects: ['pm.message.>'], storage: StorageType.File, retention: RetentionPolicy.Limits, discard: DiscardPolicy.New, max_msgs: 2000, max_bytes: 32 * 1024 * 1024, max_msg_size: 65536, max_age: 0, max_consumers: 512 });

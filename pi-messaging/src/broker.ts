@@ -1,20 +1,14 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { closeSync, constants, existsSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connectBackend } from './nats-backend.ts';
-import { defaultAgentDir, markInitialized, messagingDir, prepareConfig, privatePath } from './config.ts';
+import { defaultAgentDir, markInitialized, prepareConfig } from './config.ts';
+import { writeServerConfig } from './broker-lifecycle.ts';
 
 /** Explicit foreground launcher. Never imported or invoked by the extension. */
 export async function runBroker(agentDir: string, binary = 'nats-server', port = 4223): Promise<{ child: ChildProcess; done: Promise<number>; stop: () => Promise<void> }> {
   const config = prepareConfig(agentDir, port);
-  const dir = messagingDir(agentDir); const data = join(dir, 'data');
-  if (!existsSync(data)) mkdirSync(data, { mode: 0o700 }); privatePath(data, true);
-  const file = join(dir, 'server.json');
-  if (existsSync(file)) privatePath(file, false);
-  const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o600);
-  try { writeFileSync(fd, JSON.stringify({ host: '127.0.0.1', port, authorization: { token: config.token }, max_payload: 4 * 1024 * 1024, jetstream: { store_dir: data, max_file_store: 128 * 1024 * 1024, sync_interval: 'always' } })); }
-  finally { closeSync(fd); }
+  const file = writeServerConfig(agentDir, config);
   const child = spawn(binary, ['-c', file], { stdio: ['ignore', 'ignore', 'pipe'] });
   const done = new Promise<number>(resolve => child.once('close', code => resolve(code ?? 1)));
   const stop = async () => {
