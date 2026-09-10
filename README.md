@@ -54,6 +54,25 @@ npm run check
 
 The authoritative Neovim plugin lockfile is `dot_config/nvim/nvim-pack-lock.json`.
 
+### Verify the terminal theme
+
+After `chezmoi apply`, reconnect with Mosh, attach tmux, and open a new tmux window so it inherits the attached client's environment. In the shell, verify:
+
+```bash
+printf 'theme=%s term=%s\n' "$LC_TERMINAL_THEME" "$TERM"
+tmux show-environment LC_TERMINAL_THEME
+```
+
+For a light terminal, both theme values should be `light`. Inside Neovim, run:
+
+```vim
+:echo $LC_TERMINAL_THEME
+:set background?
+:echo g:colors_name
+```
+
+The expected values are `light`, `background=light`, and `catppuccin-latte` (`dark`, `background=dark`, and `catppuccin-mocha` in dark mode).
+
 ## Layout
 
 - `dot_*`, `private_*`: files managed into `$HOME`
