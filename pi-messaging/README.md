@@ -4,17 +4,18 @@ Locally owned messaging between independent Pi sessions. One human command, one 
 
 ## Quick start
 
-Requirements: Node **22.19+**, Pi (tested with **0.82.0 and 0.84.1**), and `nats-server` (tested/pinned in CI: **2.14.6**). Obtain the server from [official releases](https://github.com/nats-io/nats-server/releases/tag/v2.14.6), or your package manager. The extension does not download or start it.
+Requirements: Node **22.19+**, Pi (tested with **0.82.0 and 0.84.1**), and `nats-server` (tested/pinned in CI: **2.14.6**). This dotfiles repository provisions NATS Server through its cross-platform Homebrew bundle.
 
-From the repository root:
+The first Pi session after reboot performs an authenticated health check during `session_start`. If the configured loopback broker is absent, the extension starts one detached NATS process; concurrent Pi sessions coordinate so only one starts it. The broker remains running after the initiating Pi exits and reuses the private configuration and JetStream data. Startup does **not** join a group, arm allowance, inspect messages, or trigger a model turn. There is no systemd/launchd service, so nothing starts before Pi is used.
+
+For foreground diagnostics from the repository root:
 
 ```sh
 npm ci --ignore-scripts
-# Keep this foreground process running in a separate terminal:
 NATS_SERVER=/path/to/nats-server npm run broker --workspace pi-messaging
 ```
 
-If `nats-server` is on PATH, omit `NATS_SERVER`. Port 4223 is the default; choose another on first setup with `-- --port 4423` and use that same port on subsequent starts. Ctrl+C stops only this launcher's child and preserves broker data. Use your normal service manager if you later want persistence across logins; no service is installed automatically.
+If `nats-server` is on PATH, omit `NATS_SERVER`. Autostart treats an already healthy foreground broker as a no-op. Port 4223 is the default; choose another on initial foreground setup with `-- --port 4423` and use that same port subsequently. Ctrl+C stops only the foreground launcher's child and preserves broker data.
 
 Open two normal saved Pi sessions, loading the extension explicitly until you apply the repository's settings template:
 
@@ -71,7 +72,7 @@ There is no naming-only model call, automatic greeting, broker polling from the 
 - **Pause/leave cannot recall messages already admitted to Pi.** Some can still appear afterward.
 - Reload, restart, new/resumed/forked sessions, and tree navigation require explicit rejoining. Old inboxes are never silently redirected. Revoke stale abandoned peers to reclaim participation slots, then prune eligible history.
 - A send can reserve metadata and fail before its body is published. The inbox shows a missing body; cancel that queued reservation. If publication is uncertain, inspect before composing another message—resending may duplicate work.
-- Disconnects and uncertain storage operations stop automatic admission. Inspect/reconnect through the human command and explicitly rejoin; the group allowance is retained. Missing or mismatched initialized state is an error, never a fresh replacement ledger.
+- Disconnects and uncertain storage operations stop automatic admission. A later Pi startup or `/messages` command may restart an unavailable broker, but the session must still explicitly rejoin; the group allowance is retained. Missing or mismatched initialized state is an error, never a fresh replacement ledger.
 - Peer text is a request/report, **not human authorization**. This is protection against accidental messaging loops, **not a sandbox against programs running as your OS user**, filesystem rollback, or lost/corrupt storage. It does not limit work within one agent run or another extension's loop.
 
 ## State, bounds, and dependencies
@@ -81,8 +82,11 @@ There is no naming-only model call, automatic greeting, broker polling from the 
 - `config.json`: private random token, loopback endpoint, authority UUID, initialization marker.
 - `server.json`: native NATS configuration; private token and `sync_interval: always`.
 - `data/`: JetStream storage. Never commit/export it automatically.
+- `startup.lock`: short-lived owner-only startup serialization; stale only after the bounded startup interval and a failed health check.
+- `broker.log`: private diagnostics, truncated only when a new broker process starts.
+- `broker-process.json`: diagnostic PID/start/server metadata without credentials; authenticated health remains authoritative.
 
-Directories are owner-only (`0700`), config files `0600`; unsafe permissions and symlinks are rejected. V1 only accepts a `127.0.0.1` broker. No remote listener, broker auto-start, or secret logging is added by the extension.
+Directories are owner-only (`0700`), config/lock/log/metadata files `0600`; unsafe permissions and symlinks are rejected. V1 only accepts a `127.0.0.1` broker. Autostart never opens a remote listener or logs the private token. Missing binaries, occupied ports, authentication failures, authority mismatch, and initialized-state loss fail closed while leaving Pi usable.
 
 Limits: 8 KiB message bodies; 64-code-point names; 16 active peers/group; 32 retained groups; 64 queued/uncertain messages/group; 2,000 retained message records and 512 peer records. Full stores reject new work rather than evict pending content. Send-time maintenance, throttled to once/minute per connection, removes eligible terminal history older than seven days; explicit prune can remove it earlier. Live-sender deduplication records are retained. Pruning also cleans consumers belonging to inactive/deleted identities, never merely stale active peers.
 
@@ -90,7 +94,7 @@ Three pinned official runtime dependencies: `@nats-io/transport-node`, `@nats-io
 
 ## Architecture in brief
 
-JetStream stores bodies and routes them through one durable filtered pull consumer per participation. A bounded KV entry stores **metadata and the admission ledger**, not duplicate bodies. Its compare-and-set update atomically reserves a message, checks participation, and consumes allowance. The runtime calls Pi only after confirmed admission and a fresh generation check. A lost admission acknowledgment never leads to a guessed/retried handoff.
+JetStream stores bodies and routes them through one durable filtered pull consumer per participation. A bounded KV entry stores **metadata and the admission ledger**, not duplicate bodies. Broker readiness is separate: `session_start` and the first human messaging command use a short authenticated probe, and only a startup-lock winner may initialize or launch the detached broker. Its compare-and-set update atomically reserves a message, checks participation, and consumes allowance. The runtime calls Pi only after confirmed admission and a fresh generation check. A lost admission acknowledgment never leads to a guessed/retried handoff.
 
 Enqueue reserves metadata before publication. Expected-last-subject-sequence prevents duplicate publication while the subject is retained. Delivery follows broker publication order, which can differ from metadata reservation order during concurrent sends. Change notifications wake the runtime; a five-second heartbeat reconciles missed notifications. No model call is used to poll.
 
@@ -104,7 +108,7 @@ NATS_SERVER=/path/to/nats-server npm run test:broker --workspace pi-messaging
 npm run typecheck
 ```
 
-Normal tests clearly skip broker cases if the binary is unavailable. The broker gate **fails** instead of skipping. Tests launch private temporary brokers, not the user's service. Scripted-provider tests use real Pi sessions and deferred work tools to verify busy queuing, idle wakeups, and the admission race without paid inference. CI runs broker tests under Node 24 and the minimum Node 22.19.0.
+Normal tests clearly skip broker cases if the binary is unavailable. The broker gate **fails** instead of skipping. Tests launch private temporary brokers, not the user's service. Autostart tests cover authenticated no-op behavior, detached lifetime, private files, failure paths, stale locks, and concurrent independent starters. Scripted-provider tests use real Pi sessions and deferred work tools to verify busy queuing, idle wakeups, and the admission race without paid inference. CI runs broker tests under Node 24 and the minimum Node 22.19.0.
 
 Opt-in live smoke (requires existing credentials; never rewrites them):
 

@@ -85,6 +85,18 @@ Validation:
 
 An agent blocked on a reply must yield rather than keep a polling/sleep loop running. Another extension's continuous loop can delay an idle boundary and remains independently controlled. No urgency mode, coordinator engine, automatic session launch/join, broker restart, or live-user message operation was added.
 
+## 2026-09-10 broker-autostart follow-up
+
+The first Pi session now performs a bounded authenticated health check and starts one detached loopback NATS broker when necessary. First-time authority/JetStream initialization is serialized under an owner-only startup lock; a real eight-process test initially exposed initialization outside the lock (`wrong last sequence`) and passed repeatedly after initialization became lock-owner-only. A healthy foreground broker is a no-op. Session startup never joins, arms, sends, reads bodies, or triggers a model turn, and session shutdown does not stop the detached process. Human `/messages` commands retry readiness after a startup warning.
+
+The existing Homebrew/Chezmoi bundle provisions `nats-server`; CI remains pinned to tested server 2.14.6. Private log/process metadata contain no token, and authentication, authority/state, port, path, and spawn failures do not create replacement state. The existing foreground launcher retains owned-child Ctrl+C behavior.
+
+Validation at this checkpoint: **158 aggregate tests / 66 messaging tests**, zero failures/skips under the broker gate; all 66 messaging tests pass on Node 22.19.0. Development Pi 0.82.0 and installed Pi 0.84.1 extension tests pass (27 installed-SDK tests). Typecheck, ShellCheck, rendered configuration/Chezmoi checks, headless Neovim, diff checks, a production-only package load, and three consecutive eight-process startup races pass.
+
+A separate read-only Gemini 3 Flash review (estimated **$0.00882** at published rates; gateway billing unverified) found no critical issues. Its suggested token-bearing temporary-file cleanup does not apply: atomic temporary JSON is used only for credential-free process metadata; the token-bearing server config is owner-only and written directly. PID metadata is intentionally diagnostic while authenticated NATS/JetStream health is authoritative, avoiding PID-reuse false positives. Fixed-delay lock probing is bounded to local first-start contention, so exponential backoff was not added. The three-second failure cleanup is asynchronous, bounded, and applies only after startup has already failed; retaining the existing graceful NATS shutdown window is safer than immediate SIGKILL.
+
+This phase does not yet change fresh-membership/rejoin semantics. The lease/resume plan follows separately and no user broker, memberships, messages, or allowance were changed by isolated tests.
+
 ## Remaining limits
 
 - No real-terminal automation or macOS execution was performed; SDK UI callbacks, rendering, and Linux processes were tested.
