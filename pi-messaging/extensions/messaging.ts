@@ -41,8 +41,8 @@ export function registerMessaging(
     try {
       if (current) await current.stop(disposition);
       else if (disposition === 'leave') await backend?.leave();
-      else await backend?.suspend(); }
-    finally { if (close) { const old = backend; backend = undefined; await old?.close(); } }
+      else await backend?.suspend();
+    } finally { if (close) { const old = backend; backend = undefined; await old?.close(); } }
   }
   const shutdown = async () => { epoch++; knownGroupLabels = []; await detach(true); };
   const reportStartupFailure = (ctx: ExtensionContext, error: unknown) => {
