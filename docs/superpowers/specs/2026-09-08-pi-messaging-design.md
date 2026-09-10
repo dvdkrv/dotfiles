@@ -4,6 +4,8 @@ Date: 2026-09-08
 Status: **The user approved messaging implementation and autonomous testing, using cheap models.**
 Scope: messaging only. Project tracking, worktree lifecycle changes, knowledge storage, and intent promotion are not included.
 
+**Superseded lifecycle detail (2026-09-10):** the approved [broker-autostart and participation-resume follow-up](2026-09-10-pi-messaging-lifecycle-design.md) replaces item 4's fresh-peer-on-every-rejoin behavior. Lifecycle detach now leaves a stale/suspended identity that the exact saved Pi session may explicitly resume; explicit leave/revoke remains final. All finite allowance and conservative delivery rules below remain authoritative.
+
 ## User-visible contract
 
 1. **Explicit participation.** Independently launched, saved TUI sessions join a named group. When armed, messages can wake idle sessions; busy sessions defer incoming messages until their current work finishes. The extension never launches agents.

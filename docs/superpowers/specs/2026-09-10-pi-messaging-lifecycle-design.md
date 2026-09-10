@@ -122,8 +122,8 @@ Repeated `/messages join` while the current backend is already joined to that sa
 1. If a matching peer is online, reject resume and identify it clearly. The user must return to it or explicitly revoke it; there is no takeover prompt.
 2. Collect active matching peers that are suspended or stale. Explicitly left/revoked peers are excluded.
 3. If one candidate exists, show it in the join confirmation. If several exist, show a picker containing role name, full/compact session attribution, lifecycle state, last-seen age, and unresolved recipient-message count. Do not read message bodies.
-4. The confirmed resume performs one CAS operation checking group, session ID, peer ID, resumability, and current liveness again. It sets `suspended: false`, rotates `leaseId`, updates `lastSeen`, and returns the private lease to that backend instance.
-5. Recreate or bind the same durable consumer for the preserved peer ID, then start the normal runtime.
+4. Validate or recreate the same durable consumer for the preserved peer ID. Its filter, delivery policy, explicit acknowledgment policy, acknowledgment deadline, and one-message pending bound must match exactly. A validation failure leaves the candidate suspended/stale rather than creating an apparently online zombie.
+5. Only after that preflight, the confirmed resume performs one CAS operation checking group, session ID, peer ID, resumability, and current liveness again. It sets `suspended: false`, rotates `leaseId`, updates `lastSeen`, and returns the private lease to that backend instance before starting the normal runtime.
 6. If no candidate exists, create a fresh peer and lease using the existing join confirmation behavior.
 
 Two concurrent resumers cannot both win. The first CAS makes the peer online with a new lease; the second rereads and receives the online-peer rejection. Multiple historical candidates are never merged. Unselected records stay visible for explicit revoke/prune.

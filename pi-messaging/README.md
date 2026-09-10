@@ -1,6 +1,6 @@
 # Pi messaging
 
-Locally owned messaging between independent Pi sessions. One human command, one agent tool, and one explicitly started NATS broker. No agent spawning, transcript sharing, project manager, or third-party agent framework.
+Locally owned messaging between independent Pi sessions. One human command, one agent tool, and one private NATS broker automatically ensured by the first Pi session after reboot. No agent spawning, transcript sharing, project manager, or third-party agent framework.
 
 ## Quick start
 
@@ -41,8 +41,8 @@ A busy session normally leaves messages queued in the broker without spending al
 | Command | Purpose |
 |---|---|
 | `/messages` or `status` | Group mode, allowance, pending count, and peer presence |
-| `join [group]` | Explicitly join; creates a fresh peer identity |
-| `leave` | Stop this runtime's new admissions |
+| `join [group]` | Explicitly join or resume a stale/suspended same-session identity |
+| `leave` | Permanently end this participation; it cannot be resumed |
 | `arm [N]` | Confirm a **new** shared round, default 12, range 1–100 |
 | `pause` | Persistently stop new group admissions |
 | `send` | Compose an addressed message through the same queue/budget |
@@ -62,7 +62,7 @@ Peer lists show names such as `test-reviewer · session a31b7c92`. The initial d
 
 An already joined agent gets quiet-flow onboarding on its first eligible model request. Naming guidance has a bounded initial window of at most **two** model requests, allowing discovery followed by naming; it stops earlier once a role name is set. Later requests carry only compact current identity metadata, without periodic onboarding reminders. A new agent run does not reset this window; explicit rejoining does. If no role is chosen during setup, the session-ID default remains valid and the agent can still rename itself later without background reminders. It can call `peer_message` with `action: "rename"` and a `displayName` describing its existing role. Names are self-reported metadata, not new task assignments or authority. With no known assignment, the session-ID default remains appropriate. Naming is model-driven, not guaranteed to precede the first message; a reply can use a known sender without another discovery lookup.
 
-There is no naming-only model call, automatic greeting, broker polling from the context hook, or sharing of other conversations. Normal discovery/rename tool calls use ordinary agent-turn tokens. Renaming leaves queued messages and routing IDs unchanged; session-title changes do not overwrite the role. Rejoining starts a fresh routing identity and the session-ID default, never restores an old inbox.
+There is no naming-only model call, automatic greeting, broker polling from the context hook, or sharing of other conversations. Normal discovery/rename tool calls use ordinary agent-turn tokens. Renaming leaves queued messages and routing IDs unchanged; session-title changes do not overwrite the role. Explicit rejoin resumes a stale or gracefully suspended identity with the exact same saved session ID, preserving its role, routing ID, retained history, and inbox. If no resumable candidate exists, join creates a fresh routing identity with the session-ID default.
 
 ## Safety and recovery
 
@@ -70,10 +70,15 @@ There is no naming-only model call, automatic greeting, broker polling from the 
 - At most one unresolved handoff is admitted per recipient. If Pi never confirms receipt, inspect `/messages inbox` and explicitly dismiss it to unblock that recipient.
 - **No automatic replay or refund of an uncertain attempt.** Broker acknowledgments and redeliveries are not permission for another model turn. A receipt means Pi observed the custom message, not that the agent completed the task.
 - **Pause/leave cannot recall messages already admitted to Pi.** Some can still appear afterward.
-- Reload, restart, new/resumed/forked sessions, and tree navigation require explicit rejoining. Old inboxes are never silently redirected. Revoke stale abandoned peers to reclaim participation slots, then prune eligible history.
+- Reload, restart, quit, session replacement, and tree navigation suspend participation and require explicit rejoining. Rejoin preserves only a stale/suspended identity with the exact saved Pi session ID; it never redirects or merges inboxes. An online match blocks takeover, and multiple historical matches require a human picker.
+- Explicit `/messages leave` and human revoke are final and non-resumable. Revoke unwanted historical peers to reclaim participation slots, then prune eligible history.
 - A send can reserve metadata and fail before its body is published. The inbox shows a missing body; cancel that queued reservation. If publication is uncertain, inspect before composing another message—resending may duplicate work.
 - Disconnects and uncertain storage operations stop automatic admission. A later Pi startup or `/messages` command may restart an unavailable broker, but the session must still explicitly rejoin; the group allowance is retained. Missing or mismatched initialized state is an error, never a fresh replacement ledger.
+- Resume rotates a private participation lease. Older processes can no longer heartbeat, rename, send, reserve, observe, suspend, or leave as that peer; lease values are never exposed in UI, logs, envelopes, discovery, or model context.
+- Resume never grants allowance, replays attempted work, refunds admission, or triggers a model turn. Queued work remains addressed to the preserved inbox; attempted work stays attempted for explicit recovery.
 - Peer text is a request/report, **not human authorization**. This is protection against accidental messaging loops, **not a sandbox against programs running as your OS user**, filesystem rollback, or lost/corrupt storage. It does not limit work within one agent run or another extension's loop.
+
+**Upgrading from ledger v1:** reload every open Pi session before relying on resumed participation. The first upgraded connection performs the one-time migration and fences clients that do not hold a v2 lease. Do not delete or replace the persisted messaging directory. After migration, explicitly `/messages join <group>` in each saved session, choose the intended identity where prompted, and revoke unwanted historical peers. Migration itself does not join, arm, deliver, replay, refund, or clean up records.
 
 ## State, bounds, and dependencies
 
@@ -88,13 +93,13 @@ There is no naming-only model call, automatic greeting, broker polling from the 
 
 Directories are owner-only (`0700`), config/lock/log/metadata files `0600`; unsafe permissions and symlinks are rejected. V1 only accepts a `127.0.0.1` broker. Autostart never opens a remote listener or logs the private token. Missing binaries, occupied ports, authentication failures, authority mismatch, and initialized-state loss fail closed while leaving Pi usable.
 
-Limits: 8 KiB message bodies; 64-code-point names; 16 active peers/group; 32 retained groups; 64 queued/uncertain messages/group; 2,000 retained message records and 512 peer records. Full stores reject new work rather than evict pending content. Send-time maintenance, throttled to once/minute per connection, removes eligible terminal history older than seven days; explicit prune can remove it earlier. Live-sender deduplication records are retained. Pruning also cleans consumers belonging to inactive/deleted identities, never merely stale active peers.
+Limits: 8 KiB message bodies; 64-code-point names; 16 active peers/group; 32 retained groups; 64 queued/uncertain messages/group; 2,000 retained message records and 512 peer records. Suspended and stale peers remain active recipients and retain a slot until explicit leave/revoke. Full stores reject new work rather than evict pending content. Send-time maintenance, throttled to once/minute per connection, removes eligible terminal history older than seven days; explicit prune can remove it earlier. Live-sender deduplication records are retained. Pruning also cleans consumers belonging to inactive/deleted identities, never merely stale or suspended active peers.
 
 Three pinned official runtime dependencies: `@nats-io/transport-node`, `@nats-io/jetstream`, `@nats-io/kv` **3.4.0**. Their queue/client dependencies add seven npm packages in the root lockfile. Pi packages remain host-provided peers; repository-wide Pi pins were not upgraded.
 
 ## Architecture in brief
 
-JetStream stores bodies and routes them through one durable filtered pull consumer per participation. A bounded KV entry stores **metadata and the admission ledger**, not duplicate bodies. Broker readiness is separate: `session_start` and the first human messaging command use a short authenticated probe, and only a startup-lock winner may initialize or launch the detached broker. Its compare-and-set update atomically reserves a message, checks participation, and consumes allowance. The runtime calls Pi only after confirmed admission and a fresh generation check. A lost admission acknowledgment never leads to a guessed/retried handoff.
+JetStream stores bodies and routes them through one durable filtered pull consumer per participation. A bounded ledger-v2 KV entry stores **metadata, private participation leases, and the admission ledger**, not duplicate bodies. A one-time CAS migration preserves every v1 identity, message, attempt, counter, and timestamp; old active peers become fenced resume candidates while old inactive peers remain final. Broker readiness is separate: `session_start` and the first human messaging command use a short authenticated probe, and only a startup-lock winner may initialize or launch the detached broker. Its compare-and-set update atomically reserves a message, checks participation and lease ownership, and consumes allowance. The runtime calls Pi only after confirmed admission and a fresh generation check. A lost admission acknowledgment never leads to a guessed/retried handoff.
 
 Enqueue reserves metadata before publication. Expected-last-subject-sequence prevents duplicate publication while the subject is retained. Delivery follows broker publication order, which can differ from metadata reservation order during concurrent sends. Change notifications wake the runtime; a five-second heartbeat reconciles missed notifications. No model call is used to poll.
 
@@ -108,7 +113,7 @@ NATS_SERVER=/path/to/nats-server npm run test:broker --workspace pi-messaging
 npm run typecheck
 ```
 
-Normal tests clearly skip broker cases if the binary is unavailable. The broker gate **fails** instead of skipping. Tests launch private temporary brokers, not the user's service. Autostart tests cover authenticated no-op behavior, detached lifetime, private files, failure paths, stale locks, and concurrent independent starters. Scripted-provider tests use real Pi sessions and deferred work tools to verify busy queuing, idle wakeups, and the admission race without paid inference. CI runs broker tests under Node 24 and the minimum Node 22.19.0.
+Normal tests clearly skip broker cases if the binary is unavailable. The broker gate **fails** instead of skipping. Tests launch private temporary brokers, not the user's service. Autostart tests cover authenticated no-op behavior, detached lifetime, private files, failure paths, stale locks, and concurrent independent starters. Resume tests cover lossless concurrent migration, suspension versus final leave, candidate selection, durable inbox reuse, attempted-work preservation, old-process fencing, and held-pull redelivery. Scripted-provider tests use real Pi sessions and deferred work tools to verify busy queuing, idle wakeups, and the admission race without paid inference. CI runs broker tests under Node 24 and the minimum Node 22.19.0.
 
 Opt-in live smoke (requires existing credentials; never rewrites them):
 

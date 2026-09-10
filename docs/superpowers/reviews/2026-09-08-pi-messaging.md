@@ -97,6 +97,34 @@ A separate read-only Gemini 3 Flash review (estimated **$0.00882** at published 
 
 This phase does not yet change fresh-membership/rejoin semantics. The lease/resume plan follows separately and no user broker, memberships, messages, or allowance were changed by isolated tests.
 
+## 2026-09-10 participation-resume follow-up
+
+The control ledger is now version 2. A lossless one-time CAS migration preserves v1 groups, peers, messages, attempts, sequence, counters, IDs, and timestamps while assigning private leases; old active peers remain resumable and fenced, and old inactive peers remain final. Pi lifecycle detach suspends rather than leaves. Explicit `/messages leave` and human revoke remain permanent. An exact saved-session match may be explicitly resumed only while stale/suspended; online matches reject takeover and multiple candidates require a numbered, attributed human picker. Resume preserves role, routing ID, durable inbox, history, and allowance while rotating the private lease. Queued work remains queued and attempted work remains attempted without replay/refund.
+
+Every participant mutation is lease-checked inside its authoritative CAS operation. Real-NATS tests cover stale snapshots, concurrent migration, durable reuse, attempted preservation, a separate old-owner OS process attempting heartbeat/rename/send/reserve/observe/suspend/leave, and a body already held by the old durable consumer. The held body remains unacknowledged after lease failure and redelivers to the winner with exactly one admission. Those lease-race tests passed three consecutive runs.
+
+Inline review found and corrected two important gaps before final verification:
+
+- A fresh `joinPeer` now atomically rejects any active same-session identity, closing a concurrent UI preflight race that could otherwise create a duplicate rather than force resume.
+- Resume now validates/recreates the preserved consumer before rotating the peer lease. An incompatible consumer therefore leaves the candidate suspended/stale rather than apparently online without a usable runtime. Validation includes the exact filter, delivery policy, explicit acknowledgment policy, one-message pending bound, and five-second acknowledgment deadline. A real-broker regression failed before each relevant correction and passes afterward.
+
+Final verification:
+
+- **173 aggregate tests / 81 messaging tests**, zero failures or skips under the mandatory broker gate.
+- All 81 messaging tests pass on Node **22.19.0** and **24.20.0**; primary verification used Node 26.8.2.
+- The 32 extension/quiet lifecycle tests pass with both development Pi **0.82.0** and installed Pi **0.84.1**, with inference disabled.
+- TypeScript, ShellCheck, rendered configuration/Chezmoi checks, headless Neovim startup, whitespace checks, and a production-only seven-package install/load all pass.
+- Tests used only isolated temporary brokers and directories. No live `sap` membership, message, allowance, config, data, process, or session was read or changed.
+
+A fresh bounded read-only Gemini 3 Flash review consumed 36,070 tokens and an estimated **$0.02037** at published rates (gateway billing unverified). It reported no Critical defect. Findings were dispositioned against source and requirements:
+
+- **Rejected automatic replacement of an incompatible consumer:** exact consumer mismatch intentionally fails closed for inspection. Automatically deleting a durable with delivery state would be less conservative; the new preflight regression proves the peer remains resumable rather than becoming a zombie.
+- **Rejected claimed duplicate-session CAS race:** `joinPeer` performs the duplicate check inside the mutation passed to `change`; every wrong-revision retry rereads, revalidates, and reruns that check, yielding the intended participation error.
+- **Rejected picker ambiguity:** candidates necessarily share the exact matched session ID. Rows include number, role/session label, lifecycle, heartbeat age, and unresolved count; selection indexes the candidate array rather than a non-unique role name.
+- **Rejected relaxing stream capacity validation:** exact stream limits are an existing fail-closed safety invariant and outside this lifecycle change, not an optional lower bound.
+
+No paid live messaging smoke was needed. The branch remains unmerged/unpushed, the installed Pi package still points at merged main, and no live v1 ledger has been migrated. Rollout remains a separate explicit human operation documented in the package README and lifecycle design.
+
 ## Remaining limits
 
 - No real-terminal automation or macOS execution was performed; SDK UI callbacks, rendering, and Linux processes were tested.

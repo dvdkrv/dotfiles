@@ -4,6 +4,8 @@
 
 The user approved removing manual name entry, discovering peers, and self-selecting role-bearing names during normal work. Their final clarification supersedes the session-title fallback: **the Pi session ID is the default**. This is a focused messaging UX/tool enhancement, not automatic participation, task assignment, project tracking, or broker lifecycle work. Continue implementation/testing under the existing autonomous approval; do not merge or push.
 
+**Superseded lifecycle detail (2026-09-10):** the approved [participation-resume follow-up](2026-09-10-pi-messaging-lifecycle-design.md) preserves this role name and routing ID when the exact saved Pi session explicitly resumes a stale/suspended identity. The fresh-identity statements below remain historical behavior for joins with no resumable candidate and for rejoining after final leave/revoke.
+
 ## Identity
 
 - Join uses `ctx.sessionManager.getSessionId()` as both `sessionId` and initial `displayName`, without asking for a name. Keep the existing join confirmation, and show the default there.

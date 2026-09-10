@@ -4,7 +4,7 @@
 
 **Goal:** Let an explicitly rejoining saved Pi session safely resume one stale or suspended messaging identity while preserving its routing ID, role name, inbox, and finite-delivery state.
 
-**Architecture:** Upgrade the control ledger to version 2 with internal peer leases and a suspended lifecycle state. Every participant mutation validates a private lease; `/messages join` rejects online duplicates, lets the human choose among multiple resumable same-session peers, and rotates the winner's lease atomically before rebinding its durable consumer.
+**Architecture:** Upgrade the control ledger to version 2 with internal peer leases and a suspended lifecycle state. Every participant mutation validates a private lease; `/messages join` rejects online duplicates, lets the human choose among multiple resumable same-session peers, validates/rebinds the selected durable consumer, and then rotates the winner's lease atomically.
 
 **Tech Stack:** TypeScript; Node >=22.19; Pi extension/session APIs tested on 0.82.0 and 0.84.1; NATS JetStream/KV with official 3.4.0 clients; NATS Server 2.14.6; Node test runner and jiti 2.7.0.
 
@@ -38,7 +38,7 @@
 - `pi-messaging/tests/failures.test.mjs` — old-process and in-flight pull fencing.
 - `pi-messaging/tests/extension.test.mjs` — human resume UX and lifecycle event behavior.
 - `pi-messaging/tests/quiet.test.mjs` — quiet idle-boundary behavior after a resumed identity.
-- `pi-messaging/tests/helpers/contender.mjs` — lease-aware process fixture if the backend interface changes require it.
+- `pi-messaging/tests/helpers/lease-contender.mjs` — independent old-owner process fixture that retains its lease privately.
 - `pi-messaging/README.md` and messaging design/review docs — replace fresh-membership claims with approved resume semantics and rollout rules.
 
 ---
@@ -346,7 +346,7 @@ private async bindConsumer(peerId: string): Promise<void>
 
 It gets and validates the existing durable `peer_<uuid>` consumer when present, or creates it with the exact existing filter/ack/delivery/max-pending settings when absent. Suspend retains the durable consumer. Explicit leave/revoke delete it.
 
-`join()` stores the new record's lease only after consumer binding and generation checks. `resume()` performs CAS resume, binds the same durable, and uses the existing late-join generation fence. If local cancellation occurs after CAS, suspend that exact new lease; never finalize or create a new peer.
+`join()` stores the new record's lease only after consumer binding and generation checks. `resume()` first validates or recreates the same durable, then performs CAS resume and uses the existing late-join generation fence. Preflighting avoids an apparently online zombie when existing consumer validation fails. If local cancellation occurs after CAS, suspend that exact new lease; never finalize or create a new peer.
 
 - [ ] **Step 6: Pass leases through all backend mutations**
 
