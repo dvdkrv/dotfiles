@@ -9,6 +9,7 @@ import { handleMessages } from '../src/ui.ts';
 import { completeMessages } from '../src/completions.ts';
 import { IDENTITY_CONTEXT_TYPE, NAMING_GUIDANCE, QUIET_GUIDANCE, peerLabel } from '../src/identity.ts';
 import { peerMessageParameters, preparePeerMessageArguments } from '../src/tool-input.ts';
+import { ensureBroker } from '../src/broker-lifecycle.ts';
 
 async function configuredBackend(): Promise<MessagingBackend> {
   let config;
@@ -18,7 +19,11 @@ async function configuredBackend(): Promise<MessagingBackend> {
   return connectBackend(config);
 }
 
-export function registerMessaging(pi: ExtensionAPI, factory: () => Promise<MessagingBackend> = configuredBackend): void {
+export function registerMessaging(
+  pi: ExtensionAPI,
+  factory: () => Promise<MessagingBackend> = configuredBackend,
+  ensure: () => Promise<unknown> = () => ensureBroker(),
+): void {
   let backend: MessagingBackend | undefined;
   let selected: GroupRef | undefined;
   let knownGroupLabels: string[] = [];
@@ -36,7 +41,18 @@ export function registerMessaging(pi: ExtensionAPI, factory: () => Promise<Messa
     finally { if (close) { const old = backend; backend = undefined; await old?.close(); } }
   }
   const shutdown = async () => { epoch++; knownGroupLabels = []; await detach(true); };
-  pi.on('session_start', async () => { await shutdown(); selected = undefined; });
+  const reportStartupFailure = (ctx: ExtensionContext, error: unknown) => {
+    const message = `Messaging broker unavailable: ${safeText(error instanceof Error ? error.message : String(error))}`;
+    if (ctx.hasUI) { ctx.ui.notify(message, 'warning'); return; }
+    throw error;
+  };
+  pi.on('session_start', async (_event, ctx) => {
+    let departureError: unknown;
+    try { await shutdown(); } catch (error) { departureError = error; }
+    selected = undefined;
+    try { await ensure(); } catch (error) { reportStartupFailure(ctx, error); }
+    if (departureError) reportStartupFailure(ctx, departureError);
+  });
   pi.on('session_shutdown', shutdown);
   pi.on('session_before_tree', async (_event, ctx) => { epoch++; await detach(false); if (ctx.mode === 'tui') ctx.ui.notify('Messaging detached for tree navigation; explicitly rejoin afterward.', 'info'); });
   pi.on('agent_start', () => { void runtime?.wake(); });
@@ -73,6 +89,7 @@ export function registerMessaging(pi: ExtensionAPI, factory: () => Promise<Messa
         if (!backend || backend.closed) {
           knownGroupLabels = [];
           await detach(true); guard();
+          await ensure(); guard();
           const connected = await factory();
           if (generation !== epoch) { await connected.close(); guard(); }
           backend = connected;

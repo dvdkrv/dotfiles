@@ -15,13 +15,13 @@ const sdkRequire = createRequire(sdkEntry); const corePackage = '@earendil-works
 const { Agent } = await import(new URL(sdkRequire(corePackage).main, pathToFileURL(sdkRequire.resolve(corePackage))).href);
 const { wrapToolDefinition } = await import(new URL('./core/tools/tool-definition-wrapper.js', sdkEntry).href);
 
-function fixture(t) {
+function fixture(t, options = {}) {
   const state = p.newLedger(randomUUID()); const group = p.createGroup(state, 'review');
   const other = p.joinPeer(state, group, { sessionId: 'other', displayName: 'Other' });
   const events = new Map(); const commands = new Map(); const tools = new Map(); const renderers = new Map();
   const bodies = new Map(); const activeTools = ['peer_message'];
-  const delivered = []; const notices = []; const statuses = []; const confirmations = []; const connectCalls = [];
-  let peer; let closed = false;
+  const delivered = []; const notices = []; const statuses = []; const confirmations = []; const connectCalls = []; const ensureCalls = [];
+  let ensureError = options.ensureError; let peer; let closed = false;
   const backend = {
     get peer() { return peer; }, get closed() { return closed; },
     listGroups: async () => Object.values(state.groups).map(p.refOf), createGroup: async label => p.createGroup(state, label),
@@ -42,12 +42,13 @@ function fixture(t) {
     registerTool: tool => tools.set(tool.name, tool), registerMessageRenderer: (name, renderer) => renderers.set(name, renderer),
     sendMessage: (...args) => delivered.push(args), getSessionName: () => 'Local', getActiveTools: () => activeTools,
   };
-  const ctx = { mode: 'tui', isIdle: () => true, sessionManager: { getSessionFile: () => '/tmp/session.jsonl', getSessionId: () => 'local', getSessionName: () => 'Local' },
+  const ctx = { mode: 'tui', hasUI: true, isIdle: () => true, sessionManager: { getSessionFile: () => '/tmp/session.jsonl', getSessionId: () => 'local', getSessionName: () => 'Local' },
     ui: { notify: (...args) => notices.push(args), setStatus: (...args) => statuses.push(args),
       confirm: async (...args) => { confirmations.push(args); return true; }, input: async () => 'Local', select: async (_, choices) => choices[0], editor: async () => 'human text' } };
-  registerMessaging(pi, async () => { connectCalls.push(1); return backend; });
+  registerMessaging(pi, async () => { connectCalls.push(1); return backend; }, async () => { ensureCalls.push(1); if (ensureError) throw ensureError; });
   t.after(async () => { await events.get('session_shutdown')?.({}, ctx); });
-  return { state, group, other, backend, events, commands, tools, renderers, delivered, notices, statuses, confirmations, connectCalls, activeTools, ctx, pi };
+  return { state, group, other, backend, events, commands, tools, renderers, delivered, notices, statuses, confirmations, connectCalls, ensureCalls, activeTools, ctx, pi,
+    succeedEnsure: () => { ensureError = undefined; } };
 }
 async function execute(f, action, fields = {}) { return f.tools.get('peer_message').execute(randomUUID(), { action, ...fields }, undefined, undefined, f.ctx); }
 
@@ -105,12 +106,25 @@ test('newly created groups become completable without retaining them across relo
   assert.equal(complete('join new'), null);
 });
 
-test('factory/session_start are inert and non-TUI controls fail before connection', async t => {
-  const f = fixture(t); assert.equal(f.connectCalls.length, 0);
-  await f.events.get('session_start')({}, f.ctx); assert.equal(f.connectCalls.length, 0);
+test('session start ensures infrastructure without joining, allowance, or delivery', async t => {
+  const f = fixture(t); assert.equal(f.connectCalls.length, 0); assert.equal(f.ensureCalls.length, 0);
+  await f.events.get('session_start')({ reason: 'startup' }, f.ctx);
+  assert.equal(f.ensureCalls.length, 1); assert.equal(f.connectCalls.length, 0);
+  assert.equal(f.backend.peer, undefined); assert.equal(f.state.groups[f.group.id].limit, 0); assert.equal(f.delivered.length, 0);
   for (const mode of ['rpc', 'json', 'print']) await assert.rejects(f.commands.get('messages').handler('join review', { ...f.ctx, mode }), /TUI/i);
   await assert.rejects(execute(f, 'send', { toPeerId: f.other.id, text: 'x' }), /join/i);
-  assert.equal(f.connectCalls.length, 0);
+  assert.equal(f.connectCalls.length, 0); assert.equal(f.ensureCalls.length, 1);
+});
+
+test('startup failure warns outside model context and a messages command retries readiness', async t => {
+  const f = fixture(t, { ensureError: new Error('nats-server missing') });
+  await f.events.get('session_start')({ reason: 'startup' }, f.ctx);
+  assert.equal(f.ensureCalls.length, 1); assert.match(f.notices.at(-1)[0], /nats-server missing/i);
+  assert.equal(f.delivered.length, 0); assert.equal(f.connectCalls.length, 0);
+  f.succeedEnsure();
+  await f.commands.get('messages').handler('status', f.ctx);
+  assert.equal(f.ensureCalls.length, 2); assert.equal(f.connectCalls.length, 1);
+  assert.equal(f.delivered.length, 0);
 });
 
 test('human join and arm are explicit; agent cannot grant itself controls or read pending bodies', async t => {
