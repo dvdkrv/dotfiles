@@ -199,6 +199,15 @@ test('cross-platform package bundle provisions mosh', () => {
   assert.match(packages, /^brew "mosh"$/m);
 });
 
+test('cross-platform package bundle provisions the Pi messaging broker', () => {
+  const brewfile = repositoryFile('dot_Brewfile');
+  assert.equal(
+    brewfile.split(/\r?\n/).filter(line => line === 'brew "nats-server"').length,
+    1,
+    'nats-server should be installed exactly once through Homebrew',
+  );
+});
+
 test('mosh agent helper bypasses ordinary hosts and preserves arguments', () => {
   const harness = moshAgentHarness();
   const args = ['example.com', '--', 'tmux', 'new', '-A', '-s', 'dev'];
