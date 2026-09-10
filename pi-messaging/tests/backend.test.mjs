@@ -4,8 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { fork } from 'node:child_process';
 import { once } from 'node:events';
 import { createJiti } from 'jiti';
+import { connect } from '@nats-io/transport-node';
+import { Kvm } from '@nats-io/kv';
 import { brokerFixture } from './helpers/broker.mjs';
-const { connectBackend } = await createJiti(import.meta.url).import('../src/nats-backend.ts');
+const jiti = createJiti(import.meta.url);
+const { connectBackend } = await jiti.import('../src/nats-backend.ts');
 async function fixture(t) {
   const f = await brokerFixture(t); if (!f) return null;
   const a = await connectBackend(f.config, { initialize: true }); t.after(() => a.close());
@@ -34,6 +37,61 @@ test('real queue: opt-in, shared allowance, exact envelope, idempotency and term
   assert.equal((await a.getGroupSummary(g)).mode, 'exhausted');
   await a.arm(g, 1); const r3 = await b.reserve(); assert.notEqual(r3.message.id, second.id);
   assert.equal((await a.listMessages(g)).length, 3);
+});
+
+test('connecting to a v1 ledger performs one lossless CAS migration', async t => {
+  const f = await brokerFixture(t); if (!f) return;
+  const a = await connectBackend(f.config, { initialize: true });
+  const b = await connectBackend(f.config);
+  const group = await a.createGroup('migration');
+  await a.join(group, { sessionId: 'a', displayName: 'Alice' });
+  await b.join(group, { sessionId: 'b', displayName: 'Bob' });
+  await a.send({ toPeerId: b.peer.id, text: 'attempted' }, 'attempted');
+  await a.send({ toPeerId: b.peer.id, text: 'queued' }, 'queued');
+  await a.arm(group, 2); await b.reserve();
+  const nc = await connect({ servers: f.config.server, token: f.config.token }); t.after(() => nc.close());
+  const kv = await new Kvm(nc).open('PM_CONTROL'); const current = await kv.get('state'); const v2 = current.json();
+  const v1 = { ...structuredClone(v2), version: 1,
+    peers: Object.fromEntries(Object.entries(v2.peers).map(([id, { suspended: _suspended, leaseId: _leaseId, ...peer }]) => [id, peer])) };
+  await a.close(); await b.close();
+  const legacyRevision = await kv.update('state', JSON.stringify(v1), current.revision);
+  const upgraded = await connectBackend(f.config); t.after(() => upgraded.close());
+  const migratedEntry = await kv.get('state'); const migrated = migratedEntry.json();
+  assert.equal(migratedEntry.revision, legacyRevision + 1); assert.equal(migrated.version, 2);
+  assert.deepEqual(migrated.groups, v1.groups); assert.deepEqual(migrated.messages, v1.messages); assert.equal(migrated.sequence, v1.sequence);
+  for (const [id, oldPeer] of Object.entries(v1.peers)) {
+    const { suspended, leaseId, ...preserved } = migrated.peers[id];
+    assert.deepEqual(preserved, oldPeer); assert.equal(suspended, false); assert.match(leaseId, /^[0-9a-f-]{36}$/);
+  }
+  await upgraded.close();
+  const revision = (await kv.get('state')).revision;
+  const second = await connectBackend(f.config); await second.close();
+  assert.equal((await kv.get('state')).revision, revision, 'v2 reconnect must not rewrite the ledger');
+});
+
+test('suspended peer resumes the same role, routing inbox, and durable consumer', async t => {
+  const f = await fixture(t); if (!f) return;
+  const oldId = f.b.peer.id; await f.b.heartbeat('backend-worker');
+  const queued = await f.a.send({ toPeerId: oldId, text: 'preserved inbox' }, 'preserved');
+  await f.b.suspend(); await f.b.close();
+  const resumed = await connectBackend(f.config); t.after(() => resumed.close());
+  await resumed.resume(f.g, oldId, 'b');
+  assert.equal(resumed.peer.id, oldId); assert.equal(resumed.peer.displayName, 'backend-worker');
+  assert.equal((await resumed.listMessages(f.g)).find(message => message.id === queued.id).recipientPeerId, oldId);
+  assert.equal(JSON.stringify(await resumed.peers(f.g)).includes('leaseId'), false);
+  await f.a.arm(f.g, 1); const reservation = await resumed.reserve();
+  assert.equal(reservation.message.id, queued.id); await resumed.observe(reservation);
+  assert.equal((await resumed.getGroupSummary(f.g)).used, 1);
+});
+
+test('attempted work remains unresolved and unrefunded when its peer resumes', async t => {
+  const f = await fixture(t); if (!f) return;
+  const oldId = f.b.peer.id; const message = await f.a.send({ toPeerId: oldId, text: 'uncertain' }, 'uncertain');
+  await f.a.arm(f.g, 2); const attempt = await f.b.reserve(); assert.equal(attempt.message.id, message.id);
+  await f.b.suspend(); await f.b.close();
+  const resumed = await connectBackend(f.config); t.after(() => resumed.close()); await resumed.resume(f.g, oldId, 'b');
+  assert.equal(await resumed.reserve(), null); assert.equal((await resumed.getGroupSummary(f.g)).used, 1);
+  assert.equal((await resumed.listMessages(f.g)).find(item => item.id === message.id).state, 'attempted');
 });
 
 test('role tool publishes self-name without rerouting queued work or inheriting an old session inbox', async t => {

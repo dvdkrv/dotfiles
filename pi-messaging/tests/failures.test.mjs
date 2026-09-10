@@ -76,14 +76,35 @@ test('a pause committed while a pull is waiting prevents admission', { timeout: 
   assert.equal((await f.a.listMessages(f.g))[0].state, 'queued');
 });
 
-test('leave during join invalidates the new identity before a consumer can activate', async t => {
+test('departure during join suspends the new identity before a consumer can activate', async t => {
   const f = await fixture(t); if (!f) return;
   await f.b.leave();
   const joining = f.b.join(f.g, { sessionId: 'late', displayName: 'Late' });
   await f.b.leave(); await assert.rejects(joining, /canceled/i);
   assert.equal(f.b.peer, undefined);
-  assert.equal((await f.b.peers(f.g)).some(p => p.displayName === 'Late' && p.active), false);
+  const late = (await f.b.peers(f.g)).find(peer => peer.displayName === 'Late');
+  assert.equal(late.active, true); assert.equal(late.suspended, true);
   assert.equal((await f.jsm.streams.info('PM_MESSAGES')).state.consumer_count, 1);
+});
+
+test('rotated lease fences every old backend operation without deactivating the resumed peer', async t => {
+  const f = await fixture(t); if (!f) return;
+  const oldId = f.b.peer.id;
+  const message = await f.a.send({ toPeerId: oldId, text: 'attempted before resume' }, 'before-resume');
+  await f.a.arm(f.g, 2); const reservation = await f.b.reserve(); assert.equal(reservation.message.id, message.id);
+  const kv = await new Kvm(f.nc).open('PM_CONTROL'); const entry = await kv.get('state'); const state = entry.json();
+  state.peers[oldId].lastSeen = Date.now() - 31_000; await kv.update('state', JSON.stringify(state), entry.revision);
+  const resumed = await connectBackend(f.config); t.after(() => resumed.close()); await resumed.resume(f.g, oldId, 'b');
+  await assert.rejects(f.b.heartbeat(), /lease|current|resume/i);
+  await assert.rejects(f.b.send({ toPeerId: f.a.peer.id, text: 'must not send' }, 'old-send'), /lease|current|resume/i);
+  await assert.rejects(f.b.reserve(), /lease|current|resume/i);
+  await assert.rejects(f.b.observe(reservation), /lease|current|resume/i);
+  await assert.rejects(f.b.leave(), /lease|current|resume/i);
+  await resumed.heartbeat();
+  const peer = (await f.a.peers(f.g)).find(item => item.id === oldId);
+  assert.equal(peer.active, true); assert.equal(peer.suspended, false);
+  assert.equal((await f.a.listMessages(f.g)).some(item => item.requestKey === 'old-send'), false);
+  assert.equal((await f.a.getGroupSummary(f.g)).used, 1);
 });
 
 test('prune reclaims a durable consumer orphaned after leave metadata committed', async t => {

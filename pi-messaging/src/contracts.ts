@@ -27,6 +27,8 @@ export interface MessagingBackend extends MessagingReader {
   listGroups(): Promise<GroupRef[]>;
   createGroup(label: string): Promise<GroupRef>;
   join(ref: GroupRef, info: { sessionId: string; displayName: string }): Promise<Peer>;
+  resume(ref: GroupRef, peerId: string, sessionId: string): Promise<Peer>;
+  suspend(): Promise<void>;
   leave(): Promise<void>;
   heartbeat(displayName?: string): Promise<void>;
   arm(ref: GroupRef, limit: number): Promise<void>;

@@ -15,6 +15,20 @@ const publicPeer = (record: policy.PeerRecord): Peer => {
   const { leaseId: _leaseId, ...peer } = record;
   return peer;
 };
+async function migrateControlLedger(kv: KV, authorityId: string): Promise<void> {
+  for (let retry = 0; retry < 20; retry++) {
+    const entry = await kv.get('state');
+    if (!entry) policy.fail('corrupt', 'Messaging ledger is missing');
+    const result = policy.migrateLedger(entry.json(), authorityId);
+    if (!result.migrated) return;
+    try { await kv.update('state', JSON.stringify(result.ledger), entry.revision); return; }
+    catch (error) {
+      if (apiCode(error, 10071)) { await delay(Math.min(50, retry * 2) + Math.random() * 10); continue; }
+      throw new MessagingError('uncertain', 'Messaging ledger migration outcome uncertain; inspect state before reconnecting');
+    }
+  }
+  policy.fail('busy', 'Messaging ledger migration remained busy');
+}
 
 /** Provisioning is only called by explicit broker bootstrap, never by a Pi tool. */
 export async function connectBackend(config: BrokerConfig, options: { initialize?: boolean; timeoutMs?: number } = {}): Promise<MessagingBackend> {
@@ -34,6 +48,7 @@ export async function connectBackend(config: BrokerConfig, options: { initialize
     const stream = (await jsm.streams.info(STREAM)).config;
     const bucket = (await jsm.streams.info(`KV_${BUCKET}`)).config;
     if (stream.storage !== StorageType.File || stream.retention !== RetentionPolicy.Limits || stream.discard !== DiscardPolicy.New || stream.max_age !== 0 || stream.max_msgs !== 2000 || stream.max_bytes !== 32 * 1024 * 1024 || stream.max_msg_size !== 65536 || stream.subjects?.join() !== 'pm.message.>' || bucket.storage !== StorageType.File || bucket.max_age !== 0 || bucket.max_msgs_per_subject !== 1) policy.fail('configuration', 'Unsafe or incompatible broker stream configuration');
+    await migrateControlLedger(kv, config.authorityId);
     const backend = new NatsBackend(nc, js, jsm, kv, config.authorityId);
     await backend.snapshot();
     return backend;
@@ -102,6 +117,20 @@ class NatsBackend implements MessagingBackend {
     return Object.hasOwn(state.groups, ref.id) ? policy.summary(state, ref) : null;
   }
   async peers(ref: GroupRef): Promise<Peer[]> { const { state } = await this.snapshot(); policy.groupOf(state, ref); return Object.values(state.peers).filter(peer => peer.groupId === ref.id).map(publicPeer); }
+  private async bindConsumer(ref: GroupRef, peerId: string): Promise<void> {
+    const name = consumerName(peerId); const filter = `pm.message.${ref.id}.${peerId}.*`;
+    try {
+      const info = await this.jsm.consumers.info(STREAM, name);
+      if (info.config.filter_subject !== filter || info.config.ack_policy !== AckPolicy.Explicit || info.config.deliver_policy !== DeliverPolicy.All || info.config.max_ack_pending !== 1) policy.fail('configuration', 'Unsafe or incompatible peer consumer configuration');
+    } catch (error) {
+      if (!apiCode(error, 10014)) {
+        this.failed = true;
+        throw error instanceof MessagingError ? error : new MessagingError('uncertain', `Broker operation failed or has an uncertain outcome; no automatic retry. Leave/rejoin after inspection. ${error instanceof Error ? error.message : String(error)}`);
+      }
+      await this.io(() => this.jsm.consumers.add(STREAM, { durable_name: name, filter_subject: filter, ack_policy: AckPolicy.Explicit, deliver_policy: DeliverPolicy.All, max_ack_pending: 1, ack_wait: 5_000_000_000 }));
+    }
+    this.consumer = await this.io(() => this.js.consumers.get(STREAM, name));
+  }
   async join(ref: GroupRef, info: { sessionId: string; displayName: string }): Promise<Peer> {
     if (this.participant || this.joining) policy.fail('participation', 'Leave the current group before joining');
     this.joining = true;
@@ -109,13 +138,32 @@ class NatsBackend implements MessagingBackend {
     try {
       const record = await this.change(state => policy.joinPeer(state, ref, info));
       const lease = { peerId: record.id, leaseId: record.leaseId };
-      if (generation !== this.membershipGeneration) { await this.change(state => policy.leavePeer(state, lease)); policy.fail('participation', 'Join canceled by session departure'); }
+      if (generation !== this.membershipGeneration) { await this.change(state => policy.suspendPeer(state, lease)); policy.fail('participation', 'Join canceled by session departure'); }
       const peer = publicPeer(record); this.participant = { peer, lease };
-      await this.io(() => this.jsm.consumers.add(STREAM, { durable_name: consumerName(peer.id), filter_subject: `pm.message.${ref.id}.${peer.id}.*`, ack_policy: AckPolicy.Explicit, deliver_policy: DeliverPolicy.All, max_ack_pending: 1, ack_wait: 5_000_000_000 }));
-      this.consumer = await this.io(() => this.js.consumers.get(STREAM, consumerName(peer.id)));
-      if (generation !== this.membershipGeneration) { await this.leave(); policy.fail('participation', 'Join canceled by session departure'); }
+      await this.bindConsumer(ref, peer.id);
+      if (generation !== this.membershipGeneration) { await this.suspend(); policy.fail('participation', 'Join canceled by session departure'); }
       return { ...peer };
     } finally { this.joining = false; }
+  }
+  async resume(ref: GroupRef, peerId: string, sessionId: string): Promise<Peer> {
+    if (this.participant || this.joining) policy.fail('participation', 'Leave the current group before resuming');
+    this.joining = true;
+    const generation = ++this.membershipGeneration;
+    try {
+      const record = await this.change(state => policy.resumePeer(state, ref, sessionId, peerId));
+      const lease = { peerId: record.id, leaseId: record.leaseId };
+      if (generation !== this.membershipGeneration) { await this.change(state => policy.suspendPeer(state, lease)); policy.fail('participation', 'Resume canceled by session departure'); }
+      const peer = publicPeer(record); this.participant = { peer, lease };
+      await this.bindConsumer(ref, peer.id);
+      if (generation !== this.membershipGeneration) { await this.suspend(); policy.fail('participation', 'Resume canceled by session departure'); }
+      return { ...peer };
+    } finally { this.joining = false; }
+  }
+  async suspend(): Promise<void> {
+    this.membershipGeneration++;
+    const participant = this.participant; this.participant = undefined; this.consumer = undefined;
+    if (!participant || this.closed) return;
+    await this.change(state => policy.suspendPeer(state, participant.lease));
   }
   async leave(): Promise<void> {
     this.membershipGeneration++;
