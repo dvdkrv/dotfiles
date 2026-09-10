@@ -34,6 +34,12 @@ if [[ -S "$HOME/.ssh/ssh_auth_sock" || -L "$HOME/.ssh/ssh_auth_sock" ]]; then
   export SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"
 fi
 
+if whence -p mosh >/dev/null 2>&1 && [[ -x "$HOME/.local/bin/mosh-with-agent.sh" ]]; then
+  mosh() {
+    "$HOME/.local/bin/mosh-with-agent.sh" "$@"
+  }
+fi
+
 # Export current theme so remote tmux sessions can pick it up via SendEnv.
 if [[ -z "${LC_TERMINAL_THEME:-}" ]]; then
   export LC_TERMINAL_THEME="$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/theme" 2>/dev/null || echo dark)"

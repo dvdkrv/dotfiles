@@ -268,6 +268,16 @@ test('Claude settings do not reference missing UI or bypass safety prompts', () 
   }
 });
 
+test('zsh routes mosh through the agent sidecar when available', () => {
+  const zsh = repositoryFile('.chezmoitemplates/zshrc');
+
+  assert.ok(zsh.includes(`if whence -p mosh >/dev/null 2>&1 && [[ -x "$HOME/.local/bin/mosh-with-agent.sh" ]]; then
+  mosh() {
+    "$HOME/.local/bin/mosh-with-agent.sh" "$@"
+  }
+fi`), 'zsh should define the guarded mosh sidecar wrapper');
+});
+
 test('zsh and tmux integrations are guarded and portable', () => {
   const zsh = repositoryFile('.chezmoitemplates/zshrc');
   const tmux = repositoryFile('dot_tmux.conf');
