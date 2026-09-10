@@ -93,8 +93,9 @@ export function createGroup(s: Ledger, label: string): GroupRef {
 }
 export function joinPeer(s: Ledger, ref: GroupRef, info: { sessionId: string; displayName: string }): PeerRecord {
   const group = groupOf(s, ref);
-  if (Object.keys(s.peers).length >= 512 || Object.values(s.peers).filter(peer => peer.groupId === group.id && peer.active).length >= 16) fail('full', 'Peer store full; leave/revoke and prune old peers');
   if (!info.sessionId || info.sessionId.length > 256) fail('validation', 'Invalid session ID');
+  if (Object.values(s.peers).some(peer => peer.groupId === group.id && peer.sessionId === info.sessionId && peer.active)) fail('participation', 'This Pi session already has an existing messaging peer; resume it instead of creating a duplicate');
+  if (Object.keys(s.peers).length >= 512 || Object.values(s.peers).filter(peer => peer.groupId === group.id && peer.active).length >= 16) fail('full', 'Peer store full; leave/revoke and prune old peers');
   const peer: PeerRecord = { id: randomUUID(), groupId: group.id, sessionId: info.sessionId, displayName: validateDisplayName(info.displayName), active: true, suspended: false, lastSeen: Date.now(), leaseId: randomUUID() };
   s.peers[peer.id] = peer; return peer;
 }

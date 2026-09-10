@@ -3,7 +3,7 @@ import { Text } from '@earendil-works/pi-tui';
 import type { GroupRef, MessagingBackend } from '../src/contracts.ts';
 import { defaultAgentDir, readConfig } from '../src/config.ts';
 import { connectBackend } from '../src/nats-backend.ts';
-import { fail, safeText, validateDisplayName } from '../src/policy.ts';
+import { fail, peerLifecycle, safeText, validateDisplayName } from '../src/policy.ts';
 import { CUSTOM_TYPE, MessagingRuntime } from '../src/runtime.ts';
 import { handleMessages } from '../src/ui.ts';
 import { completeMessages } from '../src/completions.ts';
@@ -36,9 +36,12 @@ export function registerMessaging(
   let commandBusy = false;
   let renamingPeer: string | undefined;
   const tui = (ctx: ExtensionContext) => { if (ctx.mode !== 'tui') fail('mode', 'Messaging participation and controls require TUI mode'); };
-  async function detach(close: boolean): Promise<void> {
+  async function detach(close: boolean, disposition: 'suspend' | 'leave' = 'suspend'): Promise<void> {
     const current = runtime; runtime = undefined; joined = undefined; onboardedPeer = undefined; namingHintsLeft = 0;
-    try { if (current) await current.stop(); else await backend?.leave(); }
+    try {
+      if (current) await current.stop(disposition);
+      else if (disposition === 'leave') await backend?.leave();
+      else await backend?.suspend(); }
     finally { if (close) { const old = backend; backend = undefined; await old?.close(); } }
   }
   const shutdown = async () => { epoch++; knownGroupLabels = []; await detach(true); };
@@ -106,7 +109,7 @@ export function registerMessaging(
           backend: checked, selected, guard,
           groupsListed: groups => { guard(); knownGroupLabels = groups.map(group => group.label); },
           select: ref => { guard(); selected = ref; knownGroupLabels = [...new Set([...knownGroupLabels, ref.label])]; },
-          leave: async () => { await detach(false); },
+          leave: async () => { await detach(false, 'leave'); },
           joined: ref => {
             guard(); selected = joined = ref;
             runtime = new MessagingRuntime(raw, ref, {
@@ -146,7 +149,7 @@ export function registerMessaging(
         finally { if (renamingPeer === peerId) renamingPeer = undefined; }
         result = { id: peerId, sessionId: self.sessionId, displayName };
       } else if (params.action === 'peers') {
-        result = { selfId: peerId, selfSessionId: self.sessionId, peers: (await b.peers(group)).filter(p => p.active).map(p => ({ id: p.id, sessionId: p.sessionId, displayName: p.displayName, presence: Date.now() - p.lastSeen <= 30000 ? 'online' : 'stale' })) };
+        result = { selfId: peerId, selfSessionId: self.sessionId, peers: (await b.peers(group)).filter(p => p.active).map(p => ({ id: p.id, sessionId: p.sessionId, displayName: p.displayName, presence: peerLifecycle(p) })) };
       } else if (params.action === 'status') {
         if (params.beforeSequence !== undefined && (!Number.isSafeInteger(params.beforeSequence) || params.beforeSequence < 1)) fail('validation', 'Invalid beforeSequence');
         const all = (await b.listMessages(group)).filter(m => m.senderPeerId === peerId && m.sequence < (params.beforeSequence ?? Infinity));
@@ -156,7 +159,7 @@ export function registerMessaging(
         if (typeof params.toPeerId !== 'string' || typeof params.text !== 'string') fail('validation', 'send requires toPeerId and text');
         const message = await b.send({ toPeerId: params.toPeerId, text: params.text, ...(params.inReplyTo !== undefined ? { inReplyTo: params.inReplyTo } : {}) }, callId);
         const summary = await b.getGroupSummary(group); const recipient = (await b.peers(group)).find(p => p.id === params.toPeerId);
-        result = { id: message.id, recipientPeerId: message.recipientPeerId, state: message.state, note: 'Accepted by the messaging queue, not proof of task completion. Continue your assigned work; do not wait or poll for replies.', warning: summary?.mode !== 'armed' ? 'Automatic delivery is paused/exhausted.' : recipient && Date.now() - recipient.lastSeen > 30000 ? 'Recipient is stale.' : undefined };
+        result = { id: message.id, recipientPeerId: message.recipientPeerId, state: message.state, note: 'Accepted by the messaging queue, not proof of task completion. Continue your assigned work; do not wait or poll for replies.', warning: summary?.mode !== 'armed' ? 'Automatic delivery is paused/exhausted.' : recipient && peerLifecycle(recipient) !== 'online' ? `Recipient is ${peerLifecycle(recipient)}.` : undefined };
       }
       if (generation !== epoch || b.peer?.id !== peerId || joined?.id !== group.id) fail('participation', 'Session changed or participation ended during messaging operation; no automatic replay');
       return { content: [{ type: 'text', text: safeText(JSON.stringify(result)) }], details: {} };

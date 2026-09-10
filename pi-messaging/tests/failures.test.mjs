@@ -107,6 +107,33 @@ test('rotated lease fences every old backend operation without deactivating the 
   assert.equal((await f.a.getGroupSummary(f.g)).used, 1);
 });
 
+test('held pull with an old lease is not admitted and redelivers to the resumed owner', { timeout: 15000 }, async t => {
+  const f = await fixture(t); if (!f) return;
+  const oldId = f.b.peer.id; await f.a.arm(f.g, 2);
+  const originalSnapshot = f.b.snapshot.bind(f.b); let reads = 0; let release;
+  const blocked = new Promise(resolve => { release = resolve; }); let reached;
+  const atAdmission = new Promise(resolve => { reached = resolve; });
+  f.b.snapshot = async () => {
+    const snapshot = await originalSnapshot();
+    if (++reads === 2) { reached(); await blocked; }
+    return snapshot;
+  };
+  const pulling = f.b.reserve();
+  const deadline = Date.now() + 3000;
+  while ((await f.jsm.consumers.info('PM_MESSAGES', consumerName(oldId))).num_waiting === 0) {
+    if (Date.now() > deadline) throw new Error('old pull did not start');
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  const message = await f.a.send({ toPeerId: oldId, text: 'lease race' }, 'lease-race'); await atAdmission;
+  const kv = await new Kvm(f.nc).open('PM_CONTROL'); const entry = await kv.get('state'); const state = entry.json();
+  state.peers[oldId].lastSeen = Date.now() - 31_000; await kv.update('state', JSON.stringify(state), entry.revision);
+  const resumed = await connectBackend(f.config); t.after(() => resumed.close()); await resumed.resume(f.g, oldId, 'b');
+  release(); await assert.rejects(pulling, /lease|current|resume/i); await f.b.close();
+  let reservation; const redeliveryDeadline = Date.now() + 7000;
+  while (!reservation && Date.now() < redeliveryDeadline) reservation = await resumed.reserve();
+  assert.equal(reservation.message.id, message.id); assert.equal((await resumed.getGroupSummary(f.g)).used, 1);
+});
+
 test('prune reclaims a durable consumer orphaned after leave metadata committed', async t => {
   const f = await fixture(t); if (!f) return;
   const kv = await new Kvm(f.nc).open('PM_CONTROL'); const entry = await kv.get('state'); const state = entry.json();

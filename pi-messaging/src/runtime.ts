@@ -93,8 +93,9 @@ export class MessagingRuntime {
     this.deactivate();
     this.host.error(`Messaging stopped: ${safeText(error instanceof Error ? error.message : String(error))}. Inspect /messages inbox, then leave/rejoin. Credits were not refunded.`);
   }
-  async stop(): Promise<void> {
+  async stop(disposition: 'suspend' | 'leave' = 'suspend'): Promise<void> {
     this.deactivate(); this.host.status(undefined);
-    await this.backend.leave();
+    if (disposition === 'leave') await this.backend.leave();
+    else await this.backend.suspend();
   }
 }

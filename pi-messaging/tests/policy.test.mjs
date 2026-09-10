@@ -58,6 +58,12 @@ test('reject invalid bodies, names, groups, cross-group routing, replies, self-s
   assert.throws(() => send(f), /active|lease|participation/i);
 });
 
+test('fresh join cannot duplicate an active same-session membership', () => {
+  const f = fixture();
+  assert.throws(() => p.joinPeer(f.state, f.group, { sessionId: f.a.sessionId, displayName: 'Duplicate' }), /resume|existing|session/i);
+  assert.equal(Object.values(f.state.peers).filter(peer => peer.sessionId === f.a.sessionId).length, 1);
+});
+
 test('membership and retained-group bounds reject overflow without changing existing state', () => {
   const f = fixture();
   for (let i = 2; i < 16; i++) p.joinPeer(f.state, f.group, { sessionId: `s-${i}`, displayName: `Peer ${i}` });

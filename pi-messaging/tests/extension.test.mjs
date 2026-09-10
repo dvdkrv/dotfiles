@@ -23,11 +23,14 @@ function fixture(t, options = {}) {
   const delivered = []; const notices = []; const statuses = []; const confirmations = []; const connectCalls = []; const ensureCalls = [];
   let ensureError = options.ensureError; let participant; let closed = false;
   const currentLease = () => ({ peerId: participant.id, leaseId: participant.leaseId });
+  const exposePeer = record => { const { leaseId: _leaseId, ...peer } = record; return peer; };
   const backend = {
     get peer() { if (!participant) return undefined; const { leaseId: _leaseId, ...peer } = participant; return peer; }, get closed() { return closed; },
     listGroups: async () => Object.values(state.groups).map(p.refOf), createGroup: async label => p.createGroup(state, label),
-    getGroupSummary: async g => p.summary(state, g), peers: async g => Object.values(state.peers).filter(x => x.groupId === g.id),
+    getGroupSummary: async g => p.summary(state, g), peers: async g => Object.values(state.peers).filter(x => x.groupId === g.id).map(exposePeer),
     join: async (g, info) => { participant = p.joinPeer(state, g, info); return backend.peer; },
+    resume: async (g, id, sessionId) => { participant = p.resumePeer(state, g, sessionId, id); return backend.peer; },
+    suspend: async () => { if (participant) p.suspendPeer(state, currentLease()); participant = undefined; },
     leave: async () => { if (participant) p.leavePeer(state, currentLease()); participant = undefined; }, close: async () => { closed = true; },
     heartbeat: async name => { if (participant) p.heartbeat(state, currentLease(), name); }, onChange: () => () => {}, reserve: async () => null,
     arm: async (g, limit) => p.arm(state, g, limit), pause: async g => p.pause(state, g),
@@ -142,14 +145,48 @@ test('human join and arm are explicit; agent cannot grant itself controls or rea
   const peers = await execute(f, 'peers'); assert.ok(peers.content[0].text.includes(f.other.id));
 });
 
-test('tree navigation detaches and does not inherit membership or credits when joining again', async t => {
+test('tree navigation suspends and explicit rejoin resumes the same identity without changing credits', async t => {
   const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
   const oldId = f.backend.peer.id;
   await f.commands.get('messages').handler('arm 2', f.ctx);
   await f.events.get('session_before_tree')({}, f.ctx);
-  assert.equal(f.backend.peer, undefined); assert.equal(f.state.peers[oldId].active, false);
+  assert.equal(f.backend.peer, undefined); assert.equal(f.state.peers[oldId].active, true); assert.equal(f.state.peers[oldId].suspended, true);
   await assert.rejects(execute(f, 'status'), /join/i);
-  assert.equal(f.state.groups[f.group.id].limit, 2);
+  await f.commands.get('messages').handler('join review', f.ctx);
+  assert.equal(f.backend.peer.id, oldId); assert.equal(f.state.peers[oldId].suspended, false);
+  assert.equal(f.state.groups[f.group.id].limit, 2); assert.equal(Object.values(f.state.peers).filter(peer => peer.sessionId === 'local').length, 1);
+});
+
+test('repeated join of the current group is an idempotent no-op', async t => {
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  const peerId = f.backend.peer.id; const count = Object.keys(f.state.peers).length; const confirmations = f.confirmations.length;
+  await f.commands.get('messages').handler('join review', f.ctx);
+  assert.equal(f.backend.peer.id, peerId); assert.equal(Object.keys(f.state.peers).length, count); assert.equal(f.confirmations.length, confirmations);
+  assert.match(f.notices.at(-1)[0], /already joined/i);
+});
+
+test('online same-session membership blocks resume without offering takeover', async t => {
+  const f = fixture(t); f.other.sessionId = 'local'; f.other.lastSeen = Date.now();
+  await assert.rejects(f.commands.get('messages').handler('join review', f.ctx), /online|revoke/i);
+  assert.equal(f.backend.peer, undefined); assert.equal(Object.values(f.state.peers).filter(peer => peer.sessionId === 'local').length, 1);
+});
+
+test('multiple resumable memberships require an attributed picker and preserve the selected inbox', async t => {
+  const f = fixture(t);
+  const first = p.joinPeer(f.state, f.group, { sessionId: 'candidate-one', displayName: 'older-role' }); p.suspendPeer(f.state, { peerId: first.id, leaseId: first.leaseId });
+  const second = p.joinPeer(f.state, f.group, { sessionId: 'candidate-two', displayName: 'newer-role' }); p.suspendPeer(f.state, { peerId: second.id, leaseId: second.leaseId });
+  f.state.peers[first.id].sessionId = 'local'; f.state.peers[second.id].sessionId = 'local';
+  p.prepareMessage(f.state, { peerId: f.other.id, leaseId: f.other.leaseId }, { toPeerId: second.id, text: 'preserved' }, 'resume-inbox');
+  let choices;
+  f.ctx.ui.select = async (title, items) => {
+    if (title === 'Resume messaging participation') { choices = items; return items[1]; }
+    return items[0];
+  };
+  await f.commands.get('messages').handler('join review', f.ctx);
+  assert.equal(f.backend.peer.id, second.id); assert.equal(f.backend.peer.displayName, 'newer-role');
+  assert.equal(choices.length, 2); assert.ok(choices.every(item => /session local/.test(item)));
+  assert.ok(choices[1].includes('1 unresolved')); assert.equal(f.state.messages[Object.keys(f.state.messages)[0]].recipientPeerId, second.id);
+  assert.equal(f.state.groups[f.group.id].limit, 0); assert.equal(f.delivered.length, 0);
 });
 
 test('an old selected group is never silently replaced by another group with the same label', async t => {
@@ -184,8 +221,9 @@ test('session-ID defaults require no naming dialog and are independent of sessio
 test('peer selection shows role and session ID without conflating identical labels', async t => {
   const f = fixture(t);
   const sessionId = 'f82e409a-1111-4444-8888-123456789abc';
-  f.other.displayName = 'test-reviewer'; f.other.sessionId = sessionId;
-  const second = p.joinPeer(f.state, f.group, { sessionId, displayName: 'test-reviewer' });
+  f.other.displayName = 'test-reviewer';
+  const second = p.joinPeer(f.state, f.group, { sessionId: 'second-session', displayName: 'test-reviewer' });
+  f.other.sessionId = sessionId; f.state.peers[second.id].sessionId = sessionId;
   await f.commands.get('messages').handler('join review', f.ctx);
   f.ctx.ui.select = async (title, choices) => {
     assert.equal(title, 'Send to peer'); assert.equal(choices.length, 2);
@@ -352,6 +390,7 @@ test('identity guidance is transient, current, and inert outside explicit enable
   assert.deepEqual(context({ messages: original }, f.ctx).messages, original);
   assert.equal(f.connectCalls.length, 0);
   await f.commands.get('messages').handler('join review', f.ctx);
+  const peers = f.backend.peers;
   f.backend.peers = async () => { throw Error('Context must not poll the broker'); };
   f.backend.readBody = async () => { throw Error('Context must not read pending bodies'); };
   p.prepareMessage(f.state, { peerId: f.other.id, leaseId: f.other.leaseId }, { toPeerId: f.backend.peer.id, text: 'PRIVATE_BODY' }, 'pending');
@@ -370,6 +409,7 @@ test('identity guidance is transient, current, and inert outside explicit enable
   assert.deepEqual(context({ messages: refreshed.messages }, f.ctx).messages, original);
   f.activeTools.push('peer_message');
   for (const mode of ['rpc', 'json', 'print']) assert.deepEqual(context({ messages: refreshed.messages }, { ...f.ctx, mode }).messages, original);
+  f.backend.peers = peers;
   await f.commands.get('messages').handler('leave', f.ctx);
   assert.deepEqual(context({ messages: refreshed.messages }, f.ctx).messages, original);
   await f.commands.get('messages').handler('join review', f.ctx); await f.backend.close();

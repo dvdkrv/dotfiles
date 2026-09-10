@@ -55,7 +55,8 @@ test('connecting to a v1 ledger performs one lossless CAS migration', async t =>
     peers: Object.fromEntries(Object.entries(v2.peers).map(([id, { suspended: _suspended, leaseId: _leaseId, ...peer }]) => [id, peer])) };
   await a.close(); await b.close();
   const legacyRevision = await kv.update('state', JSON.stringify(v1), current.revision);
-  const upgraded = await connectBackend(f.config); t.after(() => upgraded.close());
+  const [upgraded, competing] = await Promise.all([connectBackend(f.config), connectBackend(f.config)]);
+  t.after(() => upgraded.close()); t.after(() => competing.close());
   const migratedEntry = await kv.get('state'); const migrated = migratedEntry.json();
   assert.equal(migratedEntry.revision, legacyRevision + 1); assert.equal(migrated.version, 2);
   assert.deepEqual(migrated.groups, v1.groups); assert.deepEqual(migrated.messages, v1.messages); assert.equal(migrated.sequence, v1.sequence);
@@ -63,7 +64,7 @@ test('connecting to a v1 ledger performs one lossless CAS migration', async t =>
     const { suspended, leaseId, ...preserved } = migrated.peers[id];
     assert.deepEqual(preserved, oldPeer); assert.equal(suspended, false); assert.match(leaseId, /^[0-9a-f-]{36}$/);
   }
-  await upgraded.close();
+  await upgraded.close(); await competing.close();
   const revision = (await kv.get('state')).revision;
   const second = await connectBackend(f.config); await second.close();
   assert.equal((await kv.get('state')).revision, revision, 'v2 reconnect must not rewrite the ledger');
@@ -167,13 +168,17 @@ test('concurrent sends preserve one identity and metadata reads cannot change al
 test('hard broker restart preserves attempted records, budgets and old inboxes', async t => {
   const f = await fixture(t); if (!f) return;
   const { a, b, g } = f;
-  await a.arm(g, 2); const m = await a.send({ toPeerId: b.peer.id, text: 'uncertain' }, 'c');
+  const oldId = b.peer.id;
+  await a.arm(g, 2); const m = await a.send({ toPeerId: oldId, text: 'uncertain' }, 'c');
   await b.reserve(); await f.stop('SIGKILL'); await f.start();
+  const nc = await connect({ servers: f.config.server, token: f.config.token }); const kv = await new Kvm(nc).open('PM_CONTROL');
+  const entry = await kv.get('state'); const state = entry.json(); state.peers[oldId].lastSeen = Date.now() - 31_000;
+  await kv.update('state', JSON.stringify(state), entry.revision); await nc.close();
   const c = await connectBackend(f.config); t.after(() => c.close());
   assert.equal((await c.getGroupSummary(g)).remaining, 1);
   assert.equal((await c.listMessages(g))[0].state, 'attempted');
-  await c.join(g, { sessionId: 'b', displayName: 'Bob' });
-  assert.notEqual(c.peer.id, b.peer.id); assert.equal(await c.reserve(), null);
+  await c.resume(g, oldId, 'b');
+  assert.equal(c.peer.id, oldId); assert.equal(await c.reserve(), null);
   assert.equal((await c.readBody(g, m.id)).text, 'uncertain');
 });
 

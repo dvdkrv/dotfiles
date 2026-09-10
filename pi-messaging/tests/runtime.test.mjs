@@ -11,7 +11,7 @@ function fixture() {
   r.envelope = { version: 1, authorityId: group.authorityId, groupId: group.id, messageId: r.message.id, recipientPeerId: peer.id, senderPeerId: randomUUID(), senderName: 'Alice', createdAt: 10, text: 'peer text\x1b[31m' };
   const calls = []; const observed = []; const errors = [];
   let next = r; let ready = true;
-  const backend = { peer, closed: false, getGroupSummary: async () => ({ group, remaining: 11, mode: 'armed' }), reserve: async () => { const value = next; next = null; return value; }, observe: async x => { observed.push(x); }, leave: async () => {}, heartbeat: async () => {}, onChange: () => () => {} };
+  const backend = { peer, closed: false, getGroupSummary: async () => ({ group, remaining: 11, mode: 'armed' }), reserve: async () => { const value = next; next = null; return value; }, observe: async x => { observed.push(x); }, suspend: async () => {}, leave: async () => {}, heartbeat: async () => {}, onChange: () => () => {} };
   const runtime = new MessagingRuntime(backend, group, { ready: () => ready, deliver: (...args) => calls.push(args), status: () => {}, error: text => errors.push(text) });
   return { runtime, backend, group, r, calls, observed, errors, setReady: x => { ready = x; } };
 }
