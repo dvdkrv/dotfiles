@@ -22,8 +22,9 @@ async function configuredBackend(): Promise<MessagingBackend> {
 export function registerMessaging(
   pi: ExtensionAPI,
   factory: () => Promise<MessagingBackend> = configuredBackend,
-  ensure: () => Promise<unknown> = () => ensureBroker(),
+  ensure?: () => Promise<unknown>,
 ): void {
+  const ensureReady = ensure ?? (factory === configuredBackend ? () => ensureBroker() : async () => {});
   let backend: MessagingBackend | undefined;
   let selected: GroupRef | undefined;
   let knownGroupLabels: string[] = [];
@@ -50,7 +51,7 @@ export function registerMessaging(
     let departureError: unknown;
     try { await shutdown(); } catch (error) { departureError = error; }
     selected = undefined;
-    try { await ensure(); } catch (error) { reportStartupFailure(ctx, error); }
+    try { await ensureReady(); } catch (error) { reportStartupFailure(ctx, error); }
     if (departureError) reportStartupFailure(ctx, departureError);
   });
   pi.on('session_shutdown', shutdown);
@@ -89,7 +90,7 @@ export function registerMessaging(
         if (!backend || backend.closed) {
           knownGroupLabels = [];
           await detach(true); guard();
-          await ensure(); guard();
+          await ensureReady(); guard();
           const connected = await factory();
           if (generation !== epoch) { await connected.close(); guard(); }
           backend = connected;

@@ -21,20 +21,21 @@ function fixture(t, options = {}) {
   const events = new Map(); const commands = new Map(); const tools = new Map(); const renderers = new Map();
   const bodies = new Map(); const activeTools = ['peer_message'];
   const delivered = []; const notices = []; const statuses = []; const confirmations = []; const connectCalls = []; const ensureCalls = [];
-  let ensureError = options.ensureError; let peer; let closed = false;
+  let ensureError = options.ensureError; let participant; let closed = false;
+  const currentLease = () => ({ peerId: participant.id, leaseId: participant.leaseId });
   const backend = {
-    get peer() { return peer; }, get closed() { return closed; },
+    get peer() { if (!participant) return undefined; const { leaseId: _leaseId, ...peer } = participant; return peer; }, get closed() { return closed; },
     listGroups: async () => Object.values(state.groups).map(p.refOf), createGroup: async label => p.createGroup(state, label),
     getGroupSummary: async g => p.summary(state, g), peers: async g => Object.values(state.peers).filter(x => x.groupId === g.id),
-    join: async (g, info) => { peer = p.joinPeer(state, g, info); return peer; },
-    leave: async () => { if (peer) p.leavePeer(state, peer.id); peer = undefined; }, close: async () => { closed = true; },
-    heartbeat: async name => { if (peer) p.heartbeat(state, peer.id, name); }, onChange: () => () => {}, reserve: async () => null,
+    join: async (g, info) => { participant = p.joinPeer(state, g, info); return backend.peer; },
+    leave: async () => { if (participant) p.leavePeer(state, currentLease()); participant = undefined; }, close: async () => { closed = true; },
+    heartbeat: async name => { if (participant) p.heartbeat(state, currentLease(), name); }, onChange: () => () => {}, reserve: async () => null,
     arm: async (g, limit) => p.arm(state, g, limit), pause: async g => p.pause(state, g),
-    send: async (input, key) => { const m = p.prepareMessage(state, peer.id, input, key); bodies.set(m.id, input.text); return m; },
+    send: async (input, key) => { const m = p.prepareMessage(state, currentLease(), input, key); bodies.set(m.id, input.text); return m; },
     listMessages: async g => Object.values(state.messages).filter(m => m.groupId === g.id).sort((a, b) => b.sequence - a.sequence),
     readBody: async (_g, id) => p.envelope(state, state.messages[id], bodies.get(id)),
     resolveMessage: async (g, id, action) => p.resolveMessage(state, g, id, action),
-    revoke: async (_g, id) => p.leavePeer(state, id),
+    revoke: async (g, id) => p.revokePeer(state, g, id),
     prune: async (g, execute) => { const ids = p.prunable(state, g, Infinity); if (execute) for (const id of ids) delete state.messages[id]; return ids; },
   };
   const pi = {
@@ -47,7 +48,7 @@ function fixture(t, options = {}) {
       confirm: async (...args) => { confirmations.push(args); return true; }, input: async () => 'Local', select: async (_, choices) => choices[0], editor: async () => 'human text' } };
   registerMessaging(pi, async () => { connectCalls.push(1); return backend; }, async () => { ensureCalls.push(1); if (ensureError) throw ensureError; });
   t.after(async () => { await events.get('session_shutdown')?.({}, ctx); });
-  return { state, group, other, backend, events, commands, tools, renderers, delivered, notices, statuses, confirmations, connectCalls, ensureCalls, activeTools, ctx, pi,
+  return { state, group, other, backend, currentLease, events, commands, tools, renderers, delivered, notices, statuses, confirmations, connectCalls, ensureCalls, activeTools, ctx, pi,
     succeedEnsure: () => { ensureError = undefined; } };
 }
 async function execute(f, action, fields = {}) { return f.tools.get('peer_message').execute(randomUUID(), { action, ...fields }, undefined, undefined, f.ctx); }
@@ -198,7 +199,7 @@ test('peer selection shows role and session ID without conflating identical labe
 test('role rename changes only self while discovery retains session and routing IDs', async t => {
   const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
   const before = { ...f.backend.peer }; const groupBefore = { ...f.state.groups[f.group.id] };
-  const queued = p.prepareMessage(f.state, f.other.id, { toPeerId: before.id, text: 'PRIVATE_BODY' }, 'incoming');
+  const queued = p.prepareMessage(f.state, { peerId: f.other.id, leaseId: f.other.leaseId }, { toPeerId: before.id, text: 'PRIVATE_BODY' }, 'incoming');
   const result = JSON.parse((await execute(f, 'rename', { displayName: '  test-reviewer  ' })).content[0].text);
   assert.deepEqual(result, { id: before.id, sessionId: 'local', displayName: 'test-reviewer' });
   assert.equal(f.backend.peer.displayName, 'test-reviewer'); assert.equal(f.other.displayName, 'Other');
@@ -323,7 +324,7 @@ test('concurrent self-renames are rejected instead of racing the local name cach
   assert.ok(f.tools.get('peer_message').parameters.properties.action.enum.includes('rename'));
   let release; let started; const ready = new Promise(r => { started = r; });
   const barrier = new Promise(r => { release = r; }); const self = f.backend.peer;
-  f.backend.heartbeat = async name => { started(); await barrier; p.heartbeat(f.state, self.id, name); };
+  f.backend.heartbeat = async name => { started(); await barrier; p.heartbeat(f.state, f.currentLease(), name); };
   const first = execute(f, 'rename', { displayName: 'first-reviewer' }); await ready;
   await assert.rejects(execute(f, 'rename', { displayName: 'second-reviewer' }), /busy|progress/i);
   release(); await first; assert.equal(f.backend.peer.displayName, 'first-reviewer');
@@ -353,7 +354,7 @@ test('identity guidance is transient, current, and inert outside explicit enable
   await f.commands.get('messages').handler('join review', f.ctx);
   f.backend.peers = async () => { throw Error('Context must not poll the broker'); };
   f.backend.readBody = async () => { throw Error('Context must not read pending bodies'); };
-  p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'PRIVATE_BODY' }, 'pending');
+  p.prepareMessage(f.state, { peerId: f.other.id, leaseId: f.other.leaseId }, { toPeerId: f.backend.peer.id, text: 'PRIVATE_BODY' }, 'pending');
   const state = structuredClone(f.state);
   const supplied = context({ messages: original }, f.ctx);
   assert.equal(supplied.messages.length, 2); assert.equal(original.length, 1);
@@ -383,9 +384,9 @@ test('busy work cannot enable admission; settling idle admits one queued message
   await f.events.get('agent_start')({}, f.ctx);
   await f.commands.get('messages').handler('join review', f.ctx); await status;
   assert.equal(reserves, 0); assert.equal(f.delivered.length, 0);
-  const message = p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'quiet message' }, 'quiet');
+  const message = p.prepareMessage(f.state, { peerId: f.other.id, leaseId: f.other.leaseId }, { toPeerId: f.backend.peer.id, text: 'quiet message' }, 'quiet');
   p.arm(f.state, f.group, 1);
-  f.backend.reserve = async () => { const r = p.admit(f.state, f.backend.peer.id, message.id); return r ? { ...r, envelope: p.envelope(f.state, message, 'quiet message') } : null; };
+  f.backend.reserve = async () => { const r = p.admit(f.state, f.currentLease(), message.id); return r ? { ...r, envelope: p.envelope(f.state, message, 'quiet message') } : null; };
   let delivered; const delivery = new Promise(resolve => { delivered = resolve; });
   f.pi.sendMessage = (...args) => { f.delivered.push(args); delivered(); };
   f.ctx.isIdle = () => true; await f.events.get('agent_settled')({}, f.ctx); await delivery;
@@ -431,8 +432,8 @@ test('human composition queues as the joined peer and inbox viewing/cancellation
 test('human dismissal, revocation and pruning preserve spent allowance', async t => {
   const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
   await f.commands.get('messages').handler('arm 2', f.ctx);
-  const m = p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'uncertain' }, 'other-send');
-  p.admit(f.state, f.backend.peer.id, m.id);
+  const m = p.prepareMessage(f.state, { peerId: f.other.id, leaseId: f.other.leaseId }, { toPeerId: f.backend.peer.id, text: 'uncertain' }, 'other-send');
+  p.admit(f.state, f.currentLease(), m.id);
   const choices = ['message', 'Dismiss uncertain attempt', 'Close'];
   f.ctx.ui.select = async (_title, options) => { const choice = choices.shift(); return choice === 'message' ? options[0] : choice; };
   await f.commands.get('messages').handler('inbox', f.ctx);

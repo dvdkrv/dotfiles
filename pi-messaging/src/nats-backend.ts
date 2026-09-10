@@ -2,7 +2,7 @@ import { connect, type NatsConnection, type Subscription } from '@nats-io/transp
 import { AckPolicy, DeliverPolicy, DiscardPolicy, RetentionPolicy, StorageType, JetStreamApiError, jetstream, jetstreamManager, type Consumer, type JetStreamClient, type JetStreamManager } from '@nats-io/jetstream';
 import { Kvm, type KV } from '@nats-io/kv';
 import { setTimeout as delay } from 'node:timers/promises';
-import { MessagingError, type BrokerConfig, type Envelope, type GroupRef, type GroupSummary, type MessagingBackend, type MessageStatus, type Peer, type Reservation, type SendInput } from './contracts.ts';
+import { MessagingError, type BrokerConfig, type Envelope, type GroupRef, type GroupSummary, type MessagingBackend, type MessageStatus, type ParticipantLease, type Peer, type Reservation, type SendInput } from './contracts.ts';
 import * as policy from './policy.ts';
 
 const STREAM = 'PM_MESSAGES';
@@ -11,6 +11,10 @@ const CHANGED = 'pm.changed';
 const subject = (m: MessageStatus) => `pm.message.${m.groupId}.${m.recipientPeerId}.${m.id}`;
 const consumerName = (peerId: string) => `peer_${peerId.replaceAll('-', '')}`;
 const apiCode = (error: unknown, code: number) => error instanceof JetStreamApiError && error.code === code;
+const publicPeer = (record: policy.PeerRecord): Peer => {
+  const { leaseId: _leaseId, ...peer } = record;
+  return peer;
+};
 
 /** Provisioning is only called by explicit broker bootstrap, never by a Pi tool. */
 export async function connectBackend(config: BrokerConfig, options: { initialize?: boolean; timeoutMs?: number } = {}): Promise<MessagingBackend> {
@@ -42,7 +46,7 @@ class NatsBackend implements MessagingBackend {
   private jsm: JetStreamManager;
   private kv: KV;
   private authorityId: string;
-  private participant?: Peer;
+  private participant?: { peer: Peer; lease: ParticipantLease };
   private consumer?: Consumer;
   private failed = false;
   private fetching = false;
@@ -53,7 +57,7 @@ class NatsBackend implements MessagingBackend {
   constructor(nc: NatsConnection, js: JetStreamClient, jsm: JetStreamManager, kv: KV, authorityId: string) {
     this.nc = nc; this.js = js; this.jsm = jsm; this.kv = kv; this.authorityId = authorityId;
   }
-  get peer(): Peer | undefined { return this.participant ? { ...this.participant } : undefined; }
+  get peer(): Peer | undefined { return this.participant ? { ...this.participant.peer } : undefined; }
   get closed(): boolean { return this.failed || this.nc.isClosed(); }
   private async io<T>(operation: () => Promise<T>): Promise<T> {
     if (this.closed) policy.fail('unavailable', 'Messaging broker unavailable; explicitly leave/rejoin');
@@ -97,15 +101,16 @@ class NatsBackend implements MessagingBackend {
     if (ref.authorityId !== state.authorityId) policy.fail('authority', 'Messaging authority mismatch');
     return Object.hasOwn(state.groups, ref.id) ? policy.summary(state, ref) : null;
   }
-  async peers(ref: GroupRef): Promise<Peer[]> { const { state } = await this.snapshot(); policy.groupOf(state, ref); return Object.values(state.peers).filter(p => p.groupId === ref.id); }
+  async peers(ref: GroupRef): Promise<Peer[]> { const { state } = await this.snapshot(); policy.groupOf(state, ref); return Object.values(state.peers).filter(peer => peer.groupId === ref.id).map(publicPeer); }
   async join(ref: GroupRef, info: { sessionId: string; displayName: string }): Promise<Peer> {
     if (this.participant || this.joining) policy.fail('participation', 'Leave the current group before joining');
     this.joining = true;
     const generation = ++this.membershipGeneration;
     try {
-      const peer = await this.change(s => policy.joinPeer(s, ref, info));
-      if (generation !== this.membershipGeneration) { await this.change(s => policy.leavePeer(s, peer.id)); policy.fail('participation', 'Join canceled by session departure'); }
-      this.participant = peer;
+      const record = await this.change(state => policy.joinPeer(state, ref, info));
+      const lease = { peerId: record.id, leaseId: record.leaseId };
+      if (generation !== this.membershipGeneration) { await this.change(state => policy.leavePeer(state, lease)); policy.fail('participation', 'Join canceled by session departure'); }
+      const peer = publicPeer(record); this.participant = { peer, lease };
       await this.io(() => this.jsm.consumers.add(STREAM, { durable_name: consumerName(peer.id), filter_subject: `pm.message.${ref.id}.${peer.id}.*`, ack_policy: AckPolicy.Explicit, deliver_policy: DeliverPolicy.All, max_ack_pending: 1, ack_wait: 5_000_000_000 }));
       this.consumer = await this.io(() => this.js.consumers.get(STREAM, consumerName(peer.id)));
       if (generation !== this.membershipGeneration) { await this.leave(); policy.fail('participation', 'Join canceled by session departure'); }
@@ -114,10 +119,10 @@ class NatsBackend implements MessagingBackend {
   }
   async leave(): Promise<void> {
     this.membershipGeneration++;
-    const peer = this.participant; this.participant = undefined; this.consumer = undefined;
-    if (!peer || this.closed) return;
-    await this.change(s => policy.leavePeer(s, peer.id));
-    await this.deleteConsumer(consumerName(peer.id));
+    const participant = this.participant; this.participant = undefined; this.consumer = undefined;
+    if (!participant || this.closed) return;
+    await this.change(state => policy.leavePeer(state, participant.lease));
+    await this.deleteConsumer(consumerName(participant.peer.id));
   }
   private async deleteConsumer(name: string): Promise<void> {
     await this.io(async () => {
@@ -125,19 +130,19 @@ class NatsBackend implements MessagingBackend {
       catch (error) { if (!apiCode(error, 10014)) throw error; }
     });
   }
-  private joined(): Peer { if (!this.participant) policy.fail('participation', 'Explicitly join a messaging group first'); return this.participant; }
-  async heartbeat(displayName?: string): Promise<void> { const p = this.joined(); await this.change(s => policy.heartbeat(s, p.id, displayName)); if (displayName) p.displayName = displayName; }
+  private joined(): { peer: Peer; lease: ParticipantLease } { if (!this.participant) policy.fail('participation', 'Explicitly join a messaging group first'); return this.participant; }
+  async heartbeat(displayName?: string): Promise<void> { const participant = this.joined(); await this.change(state => policy.heartbeat(state, participant.lease, displayName)); if (displayName) participant.peer.displayName = displayName; }
   async arm(ref: GroupRef, limit: number): Promise<void> { await this.change(s => policy.arm(s, ref, limit)); }
   async pause(ref: GroupRef): Promise<void> { await this.change(s => policy.pause(s, ref)); }
   async send(input: SendInput, requestKey: string): Promise<MessageStatus> {
-    const p = this.joined(); policy.validateInput(input);
+    const participant = this.joined(); const peer = participant.peer; policy.validateInput(input);
     if (Date.now() - this.lastMaintenance > 60000) {
       const { state } = await this.snapshot();
-      policy.activePeer(state, p.id);
-      await this.prune(policy.refOf(state.groups[p.groupId]), true, Date.now() - 7 * 86400000);
+      policy.requireLease(state, participant.lease);
+      await this.prune(policy.refOf(state.groups[peer.groupId]), true, Date.now() - 7 * 86400000);
       this.lastMaintenance = Date.now();
     }
-    const m = await this.change(s => policy.prepareMessage(s, p.id, input, requestKey));
+    const m = await this.change(state => policy.prepareMessage(state, participant.lease, input, requestKey));
     // An idempotent retry of an attempted/terminal message must not republish it.
     if (m.state !== 'queued') return m;
     const body = policy.envelope(policy.newLedger(this.authorityId), m, input.text);
@@ -152,11 +157,11 @@ class NatsBackend implements MessagingBackend {
     this.notify(); return m;
   }
   async reserve(): Promise<Reservation | null> {
-    const peer = this.joined(); const consumer = this.consumer;
+    const participant = this.joined(); const peer = participant.peer; const consumer = this.consumer;
     if (!consumer || this.fetching) return null;
     this.fetching = true;
     try {
-      const { state } = await this.snapshot(); if (!policy.canReceive(state, peer.id)) return null;
+      const { state } = await this.snapshot(); if (!policy.canReceive(state, participant.lease)) return null;
       const msg = await this.io(() => consumer.next({ expires: 1000 })); if (!msg) return null;
       const body = msg.json<Envelope>();
       const r = await this.change(s => {
@@ -165,7 +170,7 @@ class NatsBackend implements MessagingBackend {
         policy.validateEnvelope(body, s, m);
         if (m.recipientPeerId !== peer.id) policy.fail('corrupt', 'Consumer returned another peer inbox');
         if (m.state !== 'queued') return { kind: 'terminal' as const };
-        const reservation = policy.admit(s, peer.id, m.id);
+        const reservation = policy.admit(s, participant.lease, m.id);
         return reservation ? { kind: 'admitted' as const, reservation } : { kind: 'defer' as const };
       });
       if (r.kind === 'defer') { msg.nak(1000); return null; }
@@ -175,8 +180,9 @@ class NatsBackend implements MessagingBackend {
     } finally { this.fetching = false; }
   }
   async observe(r: Reservation): Promise<void> {
-    if (this.joined().id !== r.peerId) policy.fail('receipt', 'Receipt is not from this participation');
-    await this.change(s => policy.observe(s, r));
+    const participant = this.joined();
+    if (participant.peer.id !== r.peerId) policy.fail('receipt', 'Receipt is not from this participation');
+    await this.change(state => policy.observe(state, participant.lease, r));
   }
   async listMessages(ref: GroupRef): Promise<MessageStatus[]> {
     const { state } = await this.snapshot(); policy.groupOf(state, ref);
@@ -191,7 +197,7 @@ class NatsBackend implements MessagingBackend {
   }
   async resolveMessage(ref: GroupRef, id: string, state: 'canceled' | 'dismissed'): Promise<void> { await this.change(s => policy.resolveMessage(s, ref, id, state)); }
   async revoke(ref: GroupRef, id: string): Promise<void> {
-    await this.change(s => { policy.groupOf(s, ref); if (!Object.hasOwn(s.peers, id) || s.peers[id].groupId !== ref.id) policy.fail('missing', 'Peer not in group'); policy.leavePeer(s, id); });
+    await this.change(state => policy.revokePeer(state, ref, id));
     await this.deleteConsumer(consumerName(id));
   }
   async prune(ref: GroupRef, execute = false, before = Infinity): Promise<string[]> {

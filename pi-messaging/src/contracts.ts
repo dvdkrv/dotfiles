@@ -1,7 +1,9 @@
 export type MessageState = 'queued' | 'attempted' | 'observed' | 'canceled' | 'dismissed';
 export interface GroupRef { authorityId: string; id: string; label: string }
 export interface Group extends GroupRef { mode: 'paused' | 'armed' | 'exhausted'; round: number; limit: number; used: number }
-export interface Peer { id: string; groupId: string; sessionId: string; displayName: string; active: boolean; lastSeen: number }
+export type PeerLifecycle = 'online' | 'stale' | 'suspended' | 'left';
+export interface Peer { id: string; groupId: string; sessionId: string; displayName: string; active: boolean; suspended: boolean; lastSeen: number }
+export interface ParticipantLease { peerId: string; leaseId: string }
 export interface MessageStatus {
   id: string; sequence: number; groupId: string; senderPeerId: string; recipientPeerId: string;
   senderName: string; requestKey: string; hash: string; createdAt: number; state: MessageState;
