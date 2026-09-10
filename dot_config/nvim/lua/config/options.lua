@@ -9,6 +9,10 @@ vim.opt.sessionoptions = { "buffers", "curdir", "tabpages", "winsize", "help", "
 vim.opt.shell = 'zsh'
 
 -- UI settings
+local terminal_theme = vim.env.LC_TERMINAL_THEME
+if terminal_theme == "light" or terminal_theme == "dark" then
+  vim.opt.background = terminal_theme
+end
 vim.opt.termguicolors = true -- True color support
 vim.opt.number = true
 vim.opt.relativenumber = true

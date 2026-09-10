@@ -23,4 +23,11 @@ for root in README.md package.json package-lock.json tsconfig.json docs tests sc
   fi
 done
 
-nvim --headless -u "$repo/dot_config/nvim/init.lua" "+lua print('nvim startup ok')" +qa
+LC_TERMINAL_THEME=light nvim --headless --cmd "set runtimepath^=$repo/dot_config/nvim" -u "$repo/dot_config/nvim/init.lua" \
+  "+lua if vim.o.background ~= 'light' or vim.g.colors_name ~= 'catppuccin-latte' then vim.api.nvim_err_writeln('light terminal theme did not select Catppuccin Latte'); vim.cmd.cquit() end" +qa
+LC_TERMINAL_THEME=dark nvim --headless --cmd "set runtimepath^=$repo/dot_config/nvim" -u "$repo/dot_config/nvim/init.lua" \
+  "+lua if vim.o.background ~= 'dark' or vim.g.colors_name ~= 'catppuccin-mocha' then vim.api.nvim_err_writeln('dark terminal theme did not select Catppuccin Mocha'); vim.cmd.cquit() end" +qa
+LC_TERMINAL_THEME=sepia nvim --headless --cmd "set runtimepath^=$repo/dot_config/nvim" -u "$repo/dot_config/nvim/init.lua" \
+  "+lua if vim.o.background ~= 'dark' or vim.g.colors_name ~= 'catppuccin-mocha' then vim.api.nvim_err_writeln('invalid terminal theme changed the default palette'); vim.cmd.cquit() end" +qa
+env -u LC_TERMINAL_THEME nvim --headless --cmd "set runtimepath^=$repo/dot_config/nvim" -u "$repo/dot_config/nvim/init.lua" \
+  "+lua if vim.o.background ~= 'dark' or vim.g.colors_name ~= 'catppuccin-mocha' then vim.api.nvim_err_writeln('missing terminal theme changed the default palette'); vim.cmd.cquit() end" +qa
