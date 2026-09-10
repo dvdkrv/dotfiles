@@ -26,7 +26,7 @@
 ## File structure
 
 - `dot_Brewfile` — provision `nats-server` through the existing cross-platform package bundle.
-- `tests/pi-package-dependencies.test.mjs` — assert durable broker provisioning remains declared.
+- `tests/provisioning.test.mjs` — assert durable broker provisioning remains declared.
 - `pi-messaging/src/broker-lifecycle.ts` — authenticated probe, private startup lock/log/process metadata, detached process launch, bounded startup coordination, and `ensureBroker()`.
 - `pi-messaging/src/broker.ts` — share server-config/readiness primitives while retaining foreground ownership and Ctrl+C behavior.
 - `pi-messaging/extensions/messaging.ts` — invoke broker readiness at Pi session start and immediately before backend connection.
@@ -42,7 +42,7 @@
 ### Task 1: Provision NATS Server through the existing package bundle
 
 **Files:**
-- Modify: `tests/pi-package-dependencies.test.mjs:95-128`
+- Modify: `tests/provisioning.test.mjs:190-205`
 - Modify: `dot_Brewfile:1-15`
 
 **Interfaces:**
@@ -51,7 +51,7 @@
 
 - [ ] **Step 1: Write the failing provisioning test**
 
-Append this repository test:
+Append this test beside the existing Mosh Brewfile assertion:
 
 ```js
 test('cross-platform package bundle provisions the Pi messaging broker', () => {
@@ -69,7 +69,7 @@ test('cross-platform package bundle provisions the Pi messaging broker', () => {
 Run:
 
 ```bash
-node --test --test-name-pattern='package bundle provisions' tests/pi-package-dependencies.test.mjs
+node --test --test-name-pattern='package bundle provisions.*messaging broker' tests/provisioning.test.mjs
 ```
 
 Expected: FAIL because `dot_Brewfile` does not contain `brew "nats-server"`.
@@ -89,7 +89,7 @@ Do not run `brew upgrade` or modify unrelated formula versions.
 Run:
 
 ```bash
-node --test --test-name-pattern='package bundle provisions' tests/pi-package-dependencies.test.mjs
+node --test --test-name-pattern='package bundle provisions.*messaging broker' tests/provisioning.test.mjs
 npm run check
 git diff --check
 ```
@@ -99,7 +99,7 @@ Expected: provisioning test PASS; repository check reports rendered templates an
 - [ ] **Step 5: Commit the provisioning change**
 
 ```bash
-git add dot_Brewfile tests/pi-package-dependencies.test.mjs
+git add dot_Brewfile tests/provisioning.test.mjs
 git commit -m "chore: provision NATS messaging broker"
 ```
 
