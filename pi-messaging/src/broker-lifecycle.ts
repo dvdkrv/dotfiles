@@ -132,7 +132,8 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
   const startupTimeoutMs = options.startupTimeoutMs ?? 10_000;
   if (!Number.isFinite(probeTimeoutMs) || probeTimeoutMs < 50 || !Number.isFinite(startupTimeoutMs) || startupTimeoutMs < 250) fail('validation', 'Invalid broker startup timeout');
   let config = loadOrCreateConfig(agentDir, options.port);
-  if (await probeAt(agentDir, config, probeTimeoutMs) === 'ready') return { state: 'running', config: readConfig(agentDir) };
+  // First-time authoritative initialization is serialized by the startup lock.
+  if (config.initialized && await probeAt(agentDir, config, probeTimeoutMs) === 'ready') return { state: 'running', config: readConfig(agentDir) };
 
   const dir = messagingDir(agentDir); const lock = join(dir, 'startup.lock');
   const deadline = Date.now() + startupTimeoutMs;
@@ -145,7 +146,7 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const current = readConfig(agentDir);
-      if (await probeAt(agentDir, current, probeTimeoutMs) === 'ready') return { state: 'running', config: readConfig(agentDir) };
+      if (current.initialized && await probeAt(agentDir, current, probeTimeoutMs) === 'ready') return { state: 'running', config: readConfig(agentDir) };
       if (lockAge(lock) > startupTimeoutMs) {
         try { unlinkSync(lock); } catch (unlinkError) { if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') throw unlinkError; }
         continue;

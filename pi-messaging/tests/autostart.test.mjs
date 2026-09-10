@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { fork, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { chmod, lstat, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -118,6 +118,33 @@ test('missing binary and foreign authentication fail closed without replacing au
     /authentication|authorization|permissions/i,
   );
   assert.equal(readConfig(second.root).authorityId, config.authorityId);
+});
+
+test('concurrent starter processes create one broker that outlives every caller', { timeout: 30000 }, async t => {
+  if (!requireBroker(t)) return;
+  const { root, port } = await isolatedRoot(t);
+  async function contend() {
+    const child = fork(new URL('./helpers/autostart-contender.mjs', import.meta.url), [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+    t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+    const exit = once(child, 'exit');
+    const message = new Promise((resolve, reject) => {
+      child.once('message', resolve);
+      child.once('error', reject);
+      child.once('exit', code => reject(new Error(`autostart contender exited ${code} before reporting`)));
+    });
+    child.send({ agentDir: root, binary, port });
+    const result = await message;
+    await exit;
+    if (result.error) throw new Error(result.error);
+    return result;
+  }
+  const results = await Promise.all(Array.from({ length: 8 }, () => contend()));
+  assert.equal(results.filter(result => result.state === 'started').length, 1);
+  assert.equal(new Set(results.map(result => result.authorityId)).size, 1);
+  assert.equal((await contend()).state, 'running');
+  assert.equal(await probeBroker(readConfig(root)), 'ready');
+  const processInfo = JSON.parse(await readFile(join(root, 'messaging', 'broker-process.json'), 'utf8'));
+  assert.equal(alive(processInfo.pid), true);
 });
 
 test('unsafe and stale startup locks are handled conservatively', { timeout: 15000 }, async t => {
