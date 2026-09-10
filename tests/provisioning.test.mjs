@@ -92,6 +92,12 @@ test('install.sh is canonical and bootstrap.sh delegates to it', () => {
   assert.doesNotMatch(bootstrap, /Homebrew\/install/);
 });
 
+test('cross-platform package bundle provisions mosh', () => {
+  const packages = repositoryFile('dot_Brewfile');
+
+  assert.match(packages, /^brew "mosh"$/m);
+});
+
 test('Pi and package installers are pinned and do not hide required failures', () => {
   const piInstaller = repositoryFile('run_onchange_after_05-install-pi.sh.tmpl');
   const packageInstaller = repositoryFile('run_onchange_after_06-install-pi-packages.sh.tmpl');
