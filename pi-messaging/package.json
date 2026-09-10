@@ -1,0 +1,28 @@
+{
+  "name": "pi-messaging",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "exports": { "./public": "./src/public.ts" },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:broker": "PI_MESSAGING_REQUIRE_BROKER=1 node --test tests/backend.test.mjs tests/broker.test.mjs tests/failures.test.mjs",
+    "broker": "node --experimental-strip-types src/broker.ts",
+    "test:live": "node scripts/live-smoke.mjs"
+  },
+  "keywords": ["pi-package"],
+  "dependencies": {
+    "@nats-io/transport-node": "3.4.0",
+    "@nats-io/jetstream": "3.4.0",
+    "@nats-io/kv": "3.4.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": { "jiti": "2.7.0" },
+  "pi": { "extensions": ["./extensions/messaging.ts"] }
+}
