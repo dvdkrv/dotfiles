@@ -37,6 +37,7 @@ function moshAgentHarness() {
   const fakeSsh = join(directory, 'ssh');
   const moshArgs = join(directory, 'mosh-args');
   const sshArgs = join(directory, 'ssh-args');
+  const sshAttempts = join(directory, 'ssh-attempts');
   const sidecarStopped = join(directory, 'sidecar-stopped');
 
   writeExecutable(fakeMosh, `#!/usr/bin/env bash
@@ -49,10 +50,21 @@ exit "\${FAKE_MOSH_STATUS:-0}"
 `);
   writeExecutable(fakeSsh, `#!/usr/bin/env bash
 printf '%s\\n' "$@" > "$FAKE_SSH_ARGS"
-if [[ "\${FAKE_SSH_MODE:-ready}" == fail ]]; then
+if [[ -f "$FAKE_SSH_ATTEMPTS" ]]; then
+  attempt=$(( $(wc -l < "$FAKE_SSH_ATTEMPTS") + 1 ))
+else
+  attempt=1
+fi
+printf '%s\\n' "$attempt" >> "$FAKE_SSH_ATTEMPTS"
+mode="\${FAKE_SSH_MODE:-ready}"
+if [[ "$mode" == fail || ( "$mode" == drop-then-fail-once && "$attempt" == 2 ) ]]; then
   exit 42
 fi
 printf '%s\\n' '__MOSH_AGENT_READY__'
+if [[ ( "$mode" == drop-once || "$mode" == drop-then-fail-once ) && "$attempt" == 1 ]]; then
+  sleep "\${FAKE_SSH_DROP_DELAY:-0.1}"
+  exit 255
+fi
 stopped() {
   printf '%s\\n' stopped > "$FAKE_SIDECAR_STOPPED"
   exit 0
@@ -64,6 +76,7 @@ while :; do sleep 0.05; done
   return {
     moshArgs,
     sshArgs,
+    sshAttempts,
     sidecarStopped,
     env: {
       ...process.env,
@@ -73,6 +86,7 @@ while :; do sleep 0.05; done
       SSH_AUTH_SOCK: join(directory, 'agent.sock'),
       FAKE_MOSH_ARGS: moshArgs,
       FAKE_SSH_ARGS: sshArgs,
+      FAKE_SSH_ATTEMPTS: sshAttempts,
       FAKE_SIDECAR_STOPPED: sidecarStopped,
     },
   };
@@ -86,14 +100,23 @@ function runMoshAgent(harness, args, env = {}) {
   });
 }
 
-async function waitForFile(path, timeout = 2000) {
+async function waitForCondition(condition, description, timeout = 2000) {
   const deadline = Date.now() + timeout;
-  while (!existsSync(path)) {
+  while (!condition()) {
     if (Date.now() >= deadline) {
-      throw new Error(`timed out waiting for ${path}`);
+      throw new Error(`timed out waiting for ${description}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
+}
+
+async function waitForFile(path, timeout = 2000) {
+  await waitForCondition(() => existsSync(path), path, timeout);
+}
+
+function sshAttemptCount(harness) {
+  if (!existsSync(harness.sshAttempts)) return 0;
+  return readFileSync(harness.sshAttempts, 'utf8').trim().split('\n').filter(Boolean).length;
 }
 
 function waitForExit(child) {
@@ -198,6 +221,9 @@ test('mosh agent helper forwards workspace agents and stops its sidecar', () => 
   const sshArgs = readFileSync(harness.sshArgs, 'utf8');
   assert.match(sshArgs, /(^|\n)-A(\n|$)/);
   assert.match(sshArgs, /(^|\n)-T(\n|$)/);
+  assert.match(sshArgs, /(^|\n)ConnectTimeout=10(\n|$)/);
+  assert.match(sshArgs, /(^|\n)ServerAliveInterval=15(\n|$)/);
+  assert.match(sshArgs, /(^|\n)ServerAliveCountMax=3(\n|$)/);
   assert.match(sshArgs, /(^|\n)user@workspace-dkirov(\n|$)/);
   assert.equal(readFileSync(harness.sidecarStopped, 'utf8').trim(), 'stopped');
 });
@@ -236,6 +262,62 @@ test('mosh agent helper stops the sidecar when interrupted', async () => {
   assert.notEqual(result.code, 0);
   await waitForFile(harness.sidecarStopped);
   assert.equal(readFileSync(harness.sidecarStopped, 'utf8').trim(), 'stopped');
+});
+
+test('mosh agent helper reconnects a dropped sidecar without ending mosh', async () => {
+  const harness = moshAgentHarness();
+  const child = spawn('bash', [moshAgentScript, 'workspace-dkirov'], {
+    env: {
+      ...harness.env,
+      FAKE_MOSH_WAIT: '1',
+      FAKE_SSH_MODE: 'drop-once',
+      MOSH_AGENT_RETRY_INITIAL: '0',
+      MOSH_AGENT_RETRY_MAX: '0',
+      MOSH_AGENT_POLL_INTERVAL: '0.02',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const exited = waitForExit(child);
+
+  try {
+    await waitForFile(harness.moshArgs);
+    await waitForCondition(() => sshAttemptCount(harness) >= 2, 'replacement SSH sidecar');
+    assert.equal(child.exitCode, null, 'mosh wrapper must remain alive during reconnection');
+  } finally {
+    child.kill('SIGTERM');
+  }
+  const result = await exited;
+
+  assert.notEqual(result.code, 0);
+  await waitForFile(harness.sidecarStopped);
+});
+
+test('mosh agent helper retries a failed replacement until it recovers', async () => {
+  const harness = moshAgentHarness();
+  const child = spawn('bash', [moshAgentScript, 'workspace-dkirov'], {
+    env: {
+      ...harness.env,
+      FAKE_MOSH_WAIT: '1',
+      FAKE_SSH_MODE: 'drop-then-fail-once',
+      MOSH_AGENT_RETRY_INITIAL: '0',
+      MOSH_AGENT_RETRY_MAX: '0',
+      MOSH_AGENT_POLL_INTERVAL: '0.02',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const exited = waitForExit(child);
+
+  try {
+    await waitForFile(harness.moshArgs);
+    await waitForCondition(() => sshAttemptCount(harness) >= 3, 'recovered SSH sidecar');
+    assert.equal(child.exitCode, null, 'mosh wrapper must survive failed replacement attempts');
+  } finally {
+    child.kill('SIGTERM');
+  }
+  const result = await exited;
+
+  assert.notEqual(result.code, 0);
+  await waitForFile(harness.sidecarStopped);
 });
 
 test('Pi and package installers are pinned and do not hide required failures', () => {
