@@ -75,7 +75,7 @@ export class MessagingRuntime {
         const envelope = reservation.envelope!;
         const metadata = { group: this.group.label, sender: envelope.senderName, senderPeerId: envelope.senderPeerId,
           recipientPeerId: this.peerId, messageId: reservation.message.id, createdAt: envelope.createdAt, inReplyTo: envelope.inReplyTo };
-        return `Message ${index + 1} of ${batch.length}\n${safeText(JSON.stringify(metadata))}\nPeer content:\n${safeText(envelope.text)}`;
+        return `Message ${index + 1} of ${batch.length}\n${safeText(JSON.stringify(metadata))}\nPeer content (JSON string):\n${safeText(JSON.stringify(envelope.text))}`;
       });
       // If work began during the asynchronous reservation, Pi queues this already-admitted
       // batch after that work instead of steering between tool steps. Never replay/refund.

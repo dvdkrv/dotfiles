@@ -9,6 +9,7 @@ import { createJiti } from 'jiti';
 import { brokerFixture } from './helpers/broker.mjs';
 const { connectBackend } = await createJiti(import.meta.url).import('../src/nats-backend.ts');
 const consumerName = id => `peer_${id.replaceAll('-', '')}`;
+function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
 async function fixture(t) {
   const f = await brokerFixture(t); if (!f) return null;
   const a = await connectBackend(f.config, { initialize: true }); t.after(() => a.close());
@@ -62,6 +63,49 @@ test('broker replay of an observed message is consumed without a second Pi reser
   assert.deepEqual(await f.b.reserve(), []);
   assert.equal((await f.a.getGroupSummary(f.g)).used, 1);
   assert.ok((await f.jsm.consumers.info('PM_MESSAGES', old.name)).delivered.stream_seq > 0, 'broker really replayed the body');
+});
+
+test('a body published after the reservation high-water waits for the next batch', { timeout: 10000 }, async t => {
+  const f = await fixture(t); if (!f) return;
+  await f.a.arm(f.g, 1);
+  const publicationStarted = deferred(); const releasePublication = deferred();
+  const publish = f.a.js.publish.bind(f.a.js);
+  f.a.js.publish = async (...args) => { publicationStarted.resolve(); await releasePublication.promise; return publish(...args); };
+  const sending = f.a.send({ toPeerId: f.b.peer.id, text: 'after boundary' }, 'after-boundary');
+  await publicationStarted.promise;
+  const streamInfo = f.b.jsm.streams.info.bind(f.b.jsm.streams); let highWaterReads = 0;
+  f.b.jsm.streams.info = async name => { if (name === 'PM_MESSAGES') highWaterReads++; return streamInfo(name); };
+  const fetch = f.b.consumer.fetch.bind(f.b.consumer); const fetchStarted = deferred(); const releaseFetch = deferred();
+  f.b.consumer.fetch = async options => {
+    const messages = await fetch(options); const iterator = messages[Symbol.asyncIterator](); let first = true;
+    return {
+      [Symbol.asyncIterator]: () => ({
+        next: async () => {
+          const pending = iterator.next();
+          if (first) { first = false; fetchStarted.resolve(); await releaseFetch.promise; }
+          return pending;
+        },
+        return: value => iterator.return?.(value),
+      }),
+      close: () => messages.close(),
+    };
+  };
+  const reserving = f.b.reserve(); await fetchStarted.promise;
+  releasePublication.resolve(); await sending; releaseFetch.resolve();
+  assert.deepEqual(await reserving, []);
+  assert.equal(highWaterReads, 1, 'reservation must capture one stream sequence boundary');
+  const next = await f.b.reserve(); assert.equal(next.length, 1); assert.equal(next[0].envelope.text, 'after boundary');
+});
+
+test('a pre-boundary body without ledger metadata is acknowledged as stale', async t => {
+  const f = await fixture(t); if (!f) return;
+  await f.a.arm(f.g, 1);
+  const message = await f.a.send({ toPeerId: f.b.peer.id, text: 'orphan' }, 'orphan');
+  const { state, revision } = await f.b.snapshot(); delete state.messages[message.id];
+  await f.b.kv.update('state', JSON.stringify(state), revision);
+  assert.deepEqual(await f.b.reserve(), []);
+  const info = await f.jsm.consumers.info('PM_MESSAGES', consumerName(f.b.peer.id));
+  assert.ok(info.ack_floor.stream_seq > 0, 'stale body must not be NAKed forever');
 });
 
 test('a pause committed before the admission CAS prevents the whole batch', { timeout: 10000 }, async t => {

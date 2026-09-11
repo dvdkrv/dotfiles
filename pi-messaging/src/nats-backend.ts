@@ -155,26 +155,33 @@ class NatsBackend implements MessagingBackend {
     if (!consumer || this.fetching) return [];
     this.fetching = true;
     try {
+      // Capture the body-publication boundary before reading ledger candidates. A sender
+      // commits metadata first, so a body with a later stream sequence waits for the
+      // next idle batch even if its queued metadata is already visible here.
+      const boundary = (await this.io(() => this.jsm.streams.info(STREAM))).state.last_seq;
       const { state } = await this.snapshot();
       if (!policy.canReceive(state, peer.id)) return [];
       const candidateIds = new Set(Object.values(state.messages)
         .filter(message => message.recipientPeerId === peer.id && message.state === 'queued')
         .map(message => message.id));
-      const drainOnly = candidateIds.size === 0;
-      const target = drainOnly ? 1 : Math.min(policy.MAX_QUEUED_PER_RECIPIENT, candidateIds.size);
+      const target = Math.min(policy.MAX_QUEUED_PER_RECIPIENT, candidateIds.size);
       const held: Array<{ message: { ack(): void; nak(millis?: number): void }; body: Envelope }> = [];
+      const deadline = Date.now() + 1000;
       let drained = 0; let stop = false;
-      while (held.length < target && drained < 64 && !stop) {
-        const requested = Math.min(target - held.length, 8);
+      while (drained < 64 && !stop && Date.now() < deadline && (target === 0 ? drained === 0 : held.length < target)) {
+        const requested = target === 0 ? 1 : Math.min(target - held.length, 8);
         let received = 0;
         await this.io(async () => {
           const messages = await consumer.fetch({ max_messages: requested, expires: 1000 });
           try {
             for await (const message of messages) {
               received++; drained++;
+              if (message.seq > boundary) { message.nak(1000); stop = true; break; }
               const body = message.json<Envelope>();
               const metadata = Object.hasOwn(state.messages, body.messageId) ? state.messages[body.messageId] : undefined;
-              if (!metadata) { message.nak(1000); stop = true; break; }
+              // Before the captured stream boundary, absent metadata denotes stale
+              // transport residue, not a newly published message. It cannot be admitted.
+              if (!metadata) { message.ack(); continue; }
               policy.validateEnvelope(body, state, metadata);
               if (metadata.recipientPeerId !== peer.id) policy.fail('corrupt', 'Consumer returned another peer inbox');
               if (metadata.state !== 'queued') { message.ack(); continue; }
@@ -183,7 +190,7 @@ class NatsBackend implements MessagingBackend {
             }
           } finally { await messages.close(); }
         });
-        if (drainOnly || received === 0) break;
+        if (target === 0 || received === 0) break;
       }
       if (held.length === 0) return [];
       const reservations = await this.change(ledger => policy.admitBatch(ledger, peer.id, held.map(item => item.body.messageId)));

@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createJiti } from 'jiti';
 import { Type } from 'typebox';
 import { InMemoryCredentialStore, createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import { convertResponsesMessages } from '@earendil-works/pi-ai/api/openai-responses-shared';
 import { brokerFixture } from './helpers/broker.mjs';
 
 const sdk = await import(process.env.PI_MESSAGING_PI_SDK || '@earendil-works/pi-coding-agent');
@@ -90,17 +91,23 @@ test('three pending senders produce one combined peer turn and spend three credi
 
 test('peer delivery remains append-only across a tool continuation', { timeout: 20_000 }, async t => {
   const f = await joinedBackends(t, 'cache-shape', 1); if (!f) return;
-  const requests = [];
+  const requests = []; let firstResponse;
   const work = { name: 'work', label: 'Work', description: 'Return one deterministic result', parameters: Type.Object({}),
     execute: async () => ({ content: [{ type: 'text', text: 'work complete' }], details: {} }) };
   const receiverSession = await createReceiverSession(t, f.broker, f.receiver, (_actual, context, model) => {
     const index = requests.length;
+    const codexModel = { ...model, provider: 'openai-codex', api: 'openai-codex-responses' };
     requests.push({ messages: structuredClone(context.messages), systemPrompt: context.systemPrompt,
-      tools: (context.tools ?? []).map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })) });
+      tools: (context.tools ?? []).map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+      codexInput: convertResponsesMessages(codexModel, context, new Set(['openai', 'openai-codex', 'opencode']), {
+        includeSystemPrompt: false, deferredTools: new Map(),
+        toolOptions: { strict: null, supportsStrictMode: true, supportsOpenAIGrammarTools: false },
+      }) });
     const stream = createAssistantMessageEventStream();
     const message = index === 0
       ? assistant(model, [{ type: 'toolCall', id: 'cache-work', name: 'work', arguments: {} }], 'toolUse')
       : assistant(model, [{ type: 'text', text: 'done' }], 'stop');
+    if (index === 0) firstResponse = structuredClone(message);
     stream.push({ type: 'done', reason: message.stopReason, message }); return stream;
   }, [work]);
   await receiverSession.session.prompt('/messages join cache-shape'); assert.equal(requests.length, 0);
@@ -114,11 +121,18 @@ test('peer delivery remains append-only across a tool continuation', { timeout: 
   assert.deepEqual(requests[0].tools, requests[1].tools);
   assert.deepEqual(requests[1].messages.slice(0, requests[0].messages.length), requests[0].messages);
   assert.equal(requests[1].messages[requests[0].messages.length].role, 'assistant');
+  const codexModel = { ...receiverSession.model, provider: 'openai-codex', api: 'openai-codex-responses' };
+  const responseItems = convertResponsesMessages(codexModel, { messages: [firstResponse] }, new Set(['openai', 'openai-codex', 'opencode']), { includeSystemPrompt: false })
+    .filter(item => item.type !== 'function_call_output' && item.type !== 'custom_tool_call_output');
+  const continuationPrefix = [...requests[0].codexInput, ...responseItems];
+  assert.deepEqual(requests[1].codexInput.slice(0, continuationPrefix.length), continuationPrefix);
+  assert.ok(requests[1].codexInput.slice(continuationPrefix.length).some(item => item.type === 'function_call_output'));
   const first = JSON.stringify(requests[0].messages); const second = JSON.stringify(requests[1].messages);
   assert.equal(first.split('CACHE_APPEND_ONLY_MARKER').length - 1, 1);
   assert.equal(second.split('CACHE_APPEND_ONLY_MARKER').length - 1, 1);
-  for (const formerGuidance of ['Messaging identity (metadata only', 'Local messaging participation is shown below']) {
+  for (const formerGuidance of ['Messaging identity (metadata only', 'Local messaging participation is shown below', 'pi-messaging.identity.v1']) {
     assert.equal(first.includes(formerGuidance), false); assert.equal(second.includes(formerGuidance), false);
+    assert.equal(JSON.stringify(requests[1].codexInput).includes(formerGuidance), false);
   }
   assert.deepEqual(receiverSession.errors, []);
 });

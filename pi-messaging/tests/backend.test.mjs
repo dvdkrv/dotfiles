@@ -190,11 +190,13 @@ test('14 independent peer processes admit exactly 12, not merely at most 12', { 
     return { child, peer };
   }));
   await coordinator.arm(g, 12);
-  await Promise.all(participants.slice(0, 12).map(async ({ child }, i) => {
+  const sends = await Promise.all(participants.map(async ({ child }, i) => {
     const next = once(child, 'message');
     child.send({ action: 'send', toPeerId: participants[(i + 1) % participants.length].peer.id, key: `race-${i}` });
-    const [result] = await next; assert.ok(result.messageId, JSON.stringify(result));
+    return (await next)[0];
   }));
+  assert.equal(sends.filter(result => result.messageId).length, 12, JSON.stringify(sends));
+  assert.equal(sends.filter(result => /allowance/i.test(result.error ?? '')).length, 2, JSON.stringify(sends));
   const results = await Promise.all(participants.map(async ({ child }) => { const next = once(child, 'message'); child.send({ action: 'reserve' }); return (await next)[0]; }));
   assert.equal(results.filter(result => result.attemptId).length, 12);
   assert.equal(results.filter(result => result.error).length, 0, JSON.stringify(results));

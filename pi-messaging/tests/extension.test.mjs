@@ -389,6 +389,7 @@ test('human composition queues as the joined peer and inbox viewing/cancellation
   f.ctx.ui.editor = async (_title, text) => { assert.equal(text, 'human text'); views++; return 'must not be sent'; };
   await f.commands.get('messages').handler('inbox', f.ctx);
   assert.equal(views, 1); assert.equal(m.state, 'canceled'); assert.equal(f.delivered.length, 0);
+  assert.match(f.confirmations.at(-1)[1], /releases this queued reservation/i);
   assert.equal(Object.keys(f.state.messages).length, 1);
 });
 
@@ -401,6 +402,7 @@ test('human dismissal, revocation and pruning preserve spent allowance', async t
   f.ctx.ui.select = async (_title, options) => { const choice = choices.shift(); return choice === 'message' ? options[0] : choice; };
   await f.commands.get('messages').handler('inbox', f.ctx);
   assert.equal(m.state, 'dismissed');
+  assert.match(f.confirmations.at(-1)[1], /does not refund the spent allowance/i);
   f.ctx.ui.select = async (_title, options) => options[0];
   await f.commands.get('messages').handler('revoke', f.ctx);
   assert.equal(f.state.peers[f.other.id].active, false);
