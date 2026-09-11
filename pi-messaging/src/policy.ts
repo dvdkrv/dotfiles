@@ -103,22 +103,46 @@ export function canReceive(s: Ledger, peerId: string): boolean {
   const g = s.groups[p.groupId];
   return g.mode === 'armed' && g.used < g.limit && !Object.values(s.messages).some(m => m.recipientPeerId === peerId && m.state === 'attempted');
 }
-export function admit(s: Ledger, peerId: string, messageId: string): Reservation | null {
-  if (!canReceive(s, peerId)) return null;
-  const m = Object.hasOwn(s.messages, messageId) ? s.messages[messageId] : undefined;
-  if (!m || m.recipientPeerId !== peerId || m.state !== 'queued') return null;
-  const g = s.groups[m.groupId];
-  m.state = 'attempted'; m.attemptId = randomUUID(); m.attemptRound = g.round; m.attemptedAt = Date.now();
-  if (++g.used === g.limit) g.mode = 'exhausted';
-  return { group: refOf(g), peerId, message: { ...m }, attemptId: m.attemptId, round: g.round };
+export function admitBatch(s: Ledger, peerId: string, messageIds: readonly string[]): Reservation[] {
+  if (messageIds.length === 0) return [];
+  if (messageIds.length > MAX_QUEUED_PER_RECIPIENT || new Set(messageIds).size !== messageIds.length) fail('validation', 'Invalid messaging batch');
+  if (!canReceive(s, peerId)) return [];
+  const peer = activePeer(s, peerId);
+  const group = s.groups[peer.groupId];
+  const selected: MessageStatus[] = [];
+  for (const id of messageIds) {
+    const message = Object.hasOwn(s.messages, id) ? s.messages[id] : undefined;
+    if (!message || message.state !== 'queued') continue;
+    if (message.recipientPeerId !== peerId || message.groupId !== group.id) fail('corrupt', 'Batch candidate belongs to another inbox');
+    if (selected.length < group.limit - group.used) selected.push(message);
+  }
+  const now = Date.now();
+  return selected.map(message => {
+    message.state = 'attempted'; message.attemptId = randomUUID(); message.attemptRound = group.round; message.attemptedAt = now;
+    if (++group.used === group.limit) group.mode = 'exhausted';
+    return { group: refOf(group), peerId, message: { ...message }, attemptId: message.attemptId, round: group.round };
+  });
 }
-export function observe(s: Ledger, r: Reservation): void {
-  groupOf(s, r.group);
-  const m = Object.hasOwn(s.messages, r.message.id) ? s.messages[r.message.id] : undefined;
-  if (!m || m.groupId !== r.group.id || m.recipientPeerId !== r.peerId || m.attemptId !== r.attemptId || m.attemptRound !== r.round || !['attempted', 'observed', 'dismissed'].includes(m.state)) fail('receipt', 'Invalid receipt correlation');
-  m.observedAt ??= Date.now();
-  if (m.state === 'attempted') { m.state = 'observed'; m.terminalAt = Date.now(); }
+export function admit(s: Ledger, peerId: string, messageId: string): Reservation | null { return admitBatch(s, peerId, [messageId])[0] ?? null; }
+export function observeBatch(s: Ledger, reservations: readonly Reservation[]): void {
+  if (reservations.length === 0 || reservations.length > MAX_QUEUED_PER_RECIPIENT) fail('receipt', 'Invalid receipt batch');
+  const ids = reservations.map(reservation => reservation.message.id);
+  if (new Set(ids).size !== ids.length) fail('receipt', 'Duplicate receipt correlation');
+  const first = reservations[0];
+  groupOf(s, first.group);
+  const messages = reservations.map(reservation => {
+    if (reservation.peerId !== first.peerId || reservation.group.id !== first.group.id || reservation.group.authorityId !== first.group.authorityId) fail('receipt', 'Mixed receipt batch');
+    const message = Object.hasOwn(s.messages, reservation.message.id) ? s.messages[reservation.message.id] : undefined;
+    if (!message || message.groupId !== reservation.group.id || message.recipientPeerId !== reservation.peerId || message.attemptId !== reservation.attemptId || message.attemptRound !== reservation.round || !['attempted', 'observed', 'dismissed'].includes(message.state)) fail('receipt', 'Invalid receipt correlation');
+    return message;
+  });
+  const now = Date.now();
+  for (const message of messages) {
+    message.observedAt ??= now;
+    if (message.state === 'attempted') { message.state = 'observed'; message.terminalAt = now; }
+  }
 }
+export function observe(s: Ledger, reservation: Reservation): void { observeBatch(s, [reservation]); }
 export function resolveMessage(s: Ledger, ref: GroupRef, id: string, state: 'canceled' | 'dismissed'): void {
   groupOf(s, ref); const m = Object.hasOwn(s.messages, id) ? s.messages[id] : undefined;
   if (!m || m.groupId !== ref.id || (state === 'canceled' ? m.state !== 'queued' : state !== 'dismissed' || m.state !== 'attempted')) fail('validation', 'Message is not eligible for that recovery action');

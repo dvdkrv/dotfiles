@@ -82,6 +82,68 @@ test('one recipient accepts at most eight queued messages', () => {
   assert.equal(Object.values(f.state.messages).filter(m => m.state === 'queued').length, 8);
 });
 
+test('atomic batch admission preserves candidate order and spends one credit per message', () => {
+  const f = fixture(); const c = addPeer(f, 'batch-c'); const d = addPeer(f, 'batch-d');
+  p.arm(f.state, f.group, 3);
+  const messages = [send(f, 'batch-a'), sendFrom(f, c, 'batch-c'), sendFrom(f, d, 'batch-d')];
+  const batch = p.admitBatch(f.state, f.b.id, messages.map(message => message.id));
+  assert.deepEqual(batch.map(reservation => reservation.message.id), messages.map(message => message.id));
+  assert.equal(new Set(batch.map(reservation => reservation.attemptId)).size, 3);
+  assert.equal(f.state.groups[f.group.id].used, 3);
+  assert.equal(f.state.groups[f.group.id].mode, 'exhausted');
+  assert.ok(batch.every(reservation => reservation.round === f.state.groups[f.group.id].round));
+});
+
+test('batch admission validates bounds, skips terminal candidates, and honors remaining allowance', () => {
+  const f = fixture(); const c = addPeer(f, 'batch-c'); const d = addPeer(f, 'batch-d');
+  p.arm(f.state, f.group, 3);
+  const terminal = send(f, 'terminal'); p.resolveMessage(f.state, f.group, terminal.id, 'canceled');
+  const first = send(f, 'first'); const second = sendFrom(f, c, 'second'); const third = sendFrom(f, d, 'third');
+  f.state.groups[f.group.id].limit = 2; // Simulate a retained pre-upgrade queue that exceeds a later allowance.
+  assert.deepEqual(p.admitBatch(f.state, f.b.id, []).map(r => r.message.id), []);
+  assert.throws(() => p.admitBatch(f.state, f.b.id, Array(9).fill(first.id)), /batch|validation/i);
+  assert.throws(() => p.admitBatch(f.state, f.b.id, [first.id, first.id]), /batch|duplicate|validation/i);
+  const batch = p.admitBatch(f.state, f.b.id, [terminal.id, first.id, second.id, third.id]);
+  assert.deepEqual(batch.map(r => r.message.id), [first.id, second.id]);
+  assert.equal(f.state.messages[third.id].state, 'queued');
+  assert.equal(f.state.groups[f.group.id].used, 2);
+});
+
+test('an existing recipient attempt blocks a new batch and another inbox cannot be admitted', () => {
+  const f = fixture(); const c = addPeer(f, 'batch-c'); const otherRecipient = addPeer(f, 'recipient');
+  p.arm(f.state, f.group, 3);
+  const attempted = send(f, 'attempted'); const firstReservation = p.admit(f.state, f.b.id, attempted.id); assert.ok(firstReservation);
+  const waiting = sendFrom(f, c, 'waiting');
+  assert.deepEqual(p.admitBatch(f.state, f.b.id, [waiting.id]), []);
+  p.observe(f.state, firstReservation);
+  p.observe(f.state, p.admit(f.state, f.b.id, waiting.id));
+  const sender = addPeer(f, 'other-sender');
+  const other = p.prepareMessage(f.state, sender.id, { toPeerId: otherRecipient.id, text: 'other inbox' }, 'other-inbox');
+  assert.throws(() => p.admitBatch(f.state, f.b.id, [other.id]), /inbox|recipient|corrupt/i);
+});
+
+test('batch observation validates every supplied correlation before mutating any member', () => {
+  const f = fixture(); const c = addPeer(f, 'observe-c'); p.arm(f.state, f.group, 2);
+  const messages = [send(f, 'observe-a'), sendFrom(f, c, 'observe-c')];
+  const batch = p.admitBatch(f.state, f.b.id, messages.map(message => message.id));
+  const before = structuredClone(f.state);
+  assert.throws(() => p.observeBatch(f.state, [batch[0], { ...batch[1], attemptId: randomUUID() }]), /receipt/i);
+  assert.deepEqual(f.state, before);
+  assert.throws(() => p.observeBatch(f.state, [batch[0], batch[0]]), /receipt|duplicate/i);
+  assert.deepEqual(f.state, before);
+  p.observeBatch(f.state, batch);
+  assert.ok(messages.every(message => f.state.messages[message.id].state === 'observed'));
+});
+
+test('batch observation preserves dismissal while recording observation', () => {
+  const f = fixture(); p.arm(f.state, f.group, 1);
+  const message = send(f, 'dismissed'); const batch = p.admitBatch(f.state, f.b.id, [message.id]);
+  p.resolveMessage(f.state, f.group, message.id, 'dismissed');
+  p.observeBatch(f.state, batch);
+  assert.equal(f.state.messages[message.id].state, 'dismissed');
+  assert.ok(f.state.messages[message.id].observedAt);
+});
+
 test('reject invalid bodies, names, groups, cross-group routing, replies, self-send and departed senders', () => {
   const f = fixture();
   for (const text of ['', '   ', '🙂'.repeat(2049)]) assert.throws(() => send(f, randomUUID(), text));
