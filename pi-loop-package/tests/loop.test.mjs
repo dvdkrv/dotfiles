@@ -81,11 +81,13 @@ test('human start and stop toggle only loop_control and inactive stop is idempot
 test('one terminating decision is persisted per iteration and duplicate calls are no-ops', async () => {
   const f = setup(); const c = context();
   await f.commands.get('loop')('start bounded --max 3', c.ctx);
-  const first = await f.tool.execute('first', { action: 'continue', reason: 'more work' });
-  const count = f.entries.length;
-  const duplicate = await f.tool.execute('second', { action: 'stop', reason: 'duplicate' });
+  const before = f.entries.length;
+  const [first, duplicate] = await Promise.all([
+    f.tool.execute('first', { action: 'continue', reason: 'more work' }),
+    f.tool.execute('second', { action: 'stop', reason: 'parallel duplicate' }),
+  ]);
   assert.equal(first.terminate, true); assert.equal(duplicate.terminate, true);
-  assert.equal(f.entries.length, count); assert.equal(f.entries.at(-1).data.shouldContinue, true);
+  assert.equal(f.entries.length, before + 1); assert.equal(f.entries.at(-1).data.shouldContinue, true);
   assert.equal(f.entries.filter(entry => entry.data.shouldContinue).length, 1);
   assert.equal(f.activeTools().includes('loop_control'), false);
 });

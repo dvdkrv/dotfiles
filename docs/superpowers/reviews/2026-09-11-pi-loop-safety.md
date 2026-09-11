@@ -42,6 +42,15 @@ The footer total covers the long-lived session and is not attributed entirely to
 
 No Critical or unresolved Important finding remains.
 
+### Authorized headless GLM review
+
+After the initial verification, the user explicitly authorized cheap headless agents. A bounded read-only `ai-gw-baseten/baseten/zai-org/GLM-5.2` review examined the approved design and complete package diff. It consumed 12,353 tokens; the gateway catalogue reports zero pricing, so no monetary-cost claim is made. The response reached its 2,400-output-token cap after emitting four concrete claims. Each was checked against Pi source and tests:
+
+- **Rejected claimed Critical active-tool corruption:** `loop_control` is uniquely registered and owned by this extension. Removing it during replacement-session reset is required, and `setControlEnabled(false)` performs no `setActiveTools` call when it is already absent.
+- **Rejected claimed missed pre-compaction value:** Pi's `_runAgentPrompt()` receives `agent_end` before `_handlePostAgentRun()` invokes `_checkCompaction()`. Multiple low-level retries retain the maximum percentage, so the guard sees the pre-compaction high-water value.
+- **Accepted parallel-test gap:** the latch was synchronous but the duplicate test invoked calls sequentially. It now uses `Promise.all` for simultaneous continue/stop calls and proves exactly one additional state entry with both results terminating.
+- **Rejected duplicate-settlement defect:** Pi emits one `agent_settled` from `_runAgentPrompt()`'s `finally`. The existing adversarial second-settlement unit invocation intentionally stops conservatively, queues no duplicate, and cannot create the original runaway behavior.
+
 ## Verification
 
 - **161 aggregate tests**, zero failures/skips under the mandatory isolated NATS broker gate.
