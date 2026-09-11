@@ -4,6 +4,9 @@ import { MessagingError, type Envelope, type Group, type GroupRef, type GroupSum
 export interface Ledger { version: 1; authorityId: string; sequence: number; groups: Record<string, Group>; peers: Record<string, Peer>; messages: Record<string, MessageStatus> }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const control = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+export const MAX_QUEUED_PER_RECIPIENT = 8;
+const unresolved = (message: MessageStatus) => message.state === 'queued' || message.state === 'attempted';
+const queuedInGroup = (state: Ledger, groupId: string) => Object.values(state.messages).filter(message => message.groupId === groupId && message.state === 'queued');
 export function fail(code: string, message: string): never { throw new MessagingError(code, message); }
 export function safeText(text: string): string { return text.replace(control, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`); }
 export function validateDisplayName(value: string): string {
@@ -69,7 +72,10 @@ export function leavePeer(s: Ledger, id: string): void { if (Object.hasOwn(s.pee
 export function heartbeat(s: Ledger, id: string, displayName?: string): void { const peer = activePeer(s, id); peer.lastSeen = Date.now(); if (displayName !== undefined) peer.displayName = validateDisplayName(displayName); }
 export function arm(s: Ledger, ref: GroupRef, limit: number): void {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail('validation', 'Allowance must be an integer from 1 to 100');
-  const g = groupOf(s, ref); g.round++; g.limit = limit; g.used = 0; g.mode = 'armed';
+  const g = groupOf(s, ref);
+  const queued = queuedInGroup(s, g.id).length;
+  if (limit < queued) fail('allowance', `Allowance must cover ${queued} already queued message${queued === 1 ? '' : 's'}`);
+  g.round++; g.limit = limit; g.used = 0; g.mode = 'armed';
 }
 export function pause(s: Ledger, ref: GroupRef): void { groupOf(s, ref).mode = 'paused'; }
 export function prepareMessage(s: Ledger, peerId: string, input: SendInput, requestKey: string): MessageStatus {
@@ -81,6 +87,11 @@ export function prepareMessage(s: Ledger, peerId: string, input: SendInput, requ
   const recipient = activePeer(s, input.toPeerId);
   if (sender.id === recipient.id || sender.groupId !== recipient.groupId) fail('validation', 'Recipient must be another peer in the same group');
   if (input.inReplyTo && (!Object.hasOwn(s.messages, input.inReplyTo) || s.messages[input.inReplyTo].groupId !== sender.groupId)) fail('validation', 'Reply reference is not in this group');
+  if (Object.values(s.messages).some(message => message.senderPeerId === sender.id && unresolved(message))) fail('busy', 'Sender already has an unresolved outbound message');
+  const group = s.groups[sender.groupId];
+  const queued = queuedInGroup(s, group.id);
+  if (queued.filter(message => message.recipientPeerId === recipient.id).length >= MAX_QUEUED_PER_RECIPIENT) fail('full', 'Recipient already has eight queued messages');
+  if (group.limit - group.used - queued.length <= 0) fail('allowance', 'No unspent messaging allowance remains for another queued message');
   if (Object.keys(s.messages).length >= 2000 || Object.values(s.messages).filter(m => m.groupId === sender.groupId && ['queued', 'attempted'].includes(m.state)).length >= 64) fail('full', 'Message queue/store full; cancel, dismiss, or prune from the human inbox');
   if (s.sequence >= Number.MAX_SAFE_INTEGER) fail('full', 'Sequence exhausted');
   const m: MessageStatus = { id: randomUUID(), sequence: ++s.sequence, groupId: sender.groupId, senderPeerId: sender.id, recipientPeerId: recipient.id, senderName: sender.displayName, requestKey, hash, createdAt: Date.now(), state: 'queued', ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}) };

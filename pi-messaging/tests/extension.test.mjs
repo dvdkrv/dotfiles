@@ -171,7 +171,7 @@ test('peer selection shows role and session ID without conflating identical labe
   const sessionId = 'f82e409a-1111-4444-8888-123456789abc';
   f.other.displayName = 'test-reviewer'; f.other.sessionId = sessionId;
   const second = p.joinPeer(f.state, f.group, { sessionId, displayName: 'test-reviewer' });
-  await f.commands.get('messages').handler('join review', f.ctx);
+  await f.commands.get('messages').handler('join review', f.ctx); p.arm(f.state, f.group, 1);
   f.ctx.ui.select = async (title, choices) => {
     assert.equal(title, 'Send to peer'); assert.equal(choices.length, 2);
     assert.ok(choices.every(c => c.includes('test-reviewer') && c.includes('f82e409a')));
@@ -182,7 +182,7 @@ test('peer selection shows role and session ID without conflating identical labe
 });
 
 test('role rename changes only self while discovery retains session and routing IDs', async t => {
-  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx); p.arm(f.state, f.group, 1);
   const before = { ...f.backend.peer }; const groupBefore = { ...f.state.groups[f.group.id] };
   const queued = p.prepareMessage(f.state, f.other.id, { toPeerId: before.id, text: 'PRIVATE_BODY' }, 'incoming');
   const result = JSON.parse((await execute(f, 'rename', { displayName: '  test-reviewer  ' })).content[0].text);
@@ -223,7 +223,7 @@ test('rename rejects administrative targets, invalid names, and unjoined or non-
 });
 
 test('real Pi argument pipeline accepts captured-style padding without changing input or sending extra work', async t => {
-  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx); p.arm(f.state, f.group, 2);
   const tool = f.tools.get('peer_message');
   const calls = [
     { action: 'peers', displayName: 'test-crawler', toPeerId: '', text: '', inReplyTo: '', beforeSequence: 1 },
@@ -240,6 +240,10 @@ test('real Pi argument pipeline accepts captured-style padding without changing 
       tools: [wrapToolDefinition(tool, () => f.ctx)] },
     streamFn: () => {
       assert.ok(requests <= calls.length, 'Scripted provider must stay bounded');
+      if (requests === 3) {
+        const first = Object.values(f.state.messages)[0];
+        p.resolveMessage(f.state, f.group, first.id, 'canceled');
+      }
       const args = calls[requests++];
       const message = { role: 'assistant', api: 'openai-responses', provider: 'test', model: 'scripted', timestamp: 1,
         content: args ? [{ type: 'toolCall', id: `call-${requests}`, name: 'peer_message', arguments: args }] : [{ type: 'text', text: 'done' }],
@@ -262,11 +266,12 @@ test('real Pi argument pipeline accepts captured-style padding without changing 
 });
 
 test('direct execution normalizes neutral padding but preserves real reply references and status cursors', async t => {
-  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx); p.arm(f.state, f.group, 2);
   for (const empty of ['', null, undefined]) {
     await execute(f, 'rename', { displayName: 'test-reviewer', toPeerId: empty, text: empty, inReplyTo: empty, beforeSequence: 1 });
   }
   const first = JSON.parse((await execute(f, 'send', { toPeerId: f.other.id, text: 'one', inReplyTo: '' })).content[0].text);
+  p.resolveMessage(f.state, f.group, first.id, 'canceled');
   await execute(f, 'send', { toPeerId: f.other.id, text: 'reply', inReplyTo: first.id });
   assert.equal(Object.values(f.state.messages)[1].inReplyTo, first.id);
   const tool = f.tools.get('peer_message'); assert.equal(typeof tool.prepareArguments, 'function');
@@ -357,8 +362,8 @@ test('busy work cannot enable admission; settling idle admits one queued message
   await f.events.get('agent_start')({}, f.ctx);
   await f.commands.get('messages').handler('join review', f.ctx); await status;
   assert.equal(reserves, 0); assert.equal(f.delivered.length, 0);
-  const message = p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'quiet message' }, 'quiet');
   p.arm(f.state, f.group, 1);
+  const message = p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'quiet message' }, 'quiet');
   f.backend.reserve = async () => { const r = p.admit(f.state, f.backend.peer.id, message.id); return r ? { ...r, envelope: p.envelope(f.state, message, 'quiet message') } : null; };
   let delivered; const delivery = new Promise(resolve => { delivered = resolve; });
   f.pi.sendMessage = (...args) => { f.delivered.push(args); delivered(); };
@@ -375,7 +380,7 @@ test('stationary tool guidance directs agents to the API without dynamic identit
 });
 
 test('human composition queues as the joined peer and inbox viewing/cancellation never enters model context', async t => {
-  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx); p.arm(f.state, f.group, 1);
   await f.commands.get('messages').handler('send', f.ctx);
   const m = Object.values(f.state.messages)[0]; assert.equal(m.senderPeerId, f.backend.peer.id);
   const choices = ['message', 'View body', 'message', 'Cancel queued message', 'Close'];
