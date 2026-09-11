@@ -4,7 +4,7 @@ import { createJiti } from 'jiti';
 const jiti = createJiti(import.meta.url);
 const { registerMessaging } = await jiti.import('../extensions/messaging.ts');
 const p = await jiti.import('../src/policy.ts');
-const { NAMING_GUIDANCE, QUIET_GUIDANCE } = await jiti.import('../src/identity.ts');
+const { QUIET_GUIDANCE } = await jiti.import('../src/identity.ts');
 import { randomUUID } from 'node:crypto';
 import { CombinedAutocompleteProvider } from '@earendil-works/pi-tui';
 import { createRequire } from 'node:module';
@@ -331,34 +331,22 @@ test('late rename acknowledgment cannot follow replacement membership or block i
   assert.notEqual(f.backend.peer.id, oldId); assert.equal(f.backend.peer.displayName, 'new-reviewer');
 });
 
-test('identity guidance is transient, current, and inert outside explicit enabled participation', async t => {
-  const f = fixture(t); const context = f.events.get('context'); assert.equal(typeof context, 'function');
-  const original = [{ role: 'user', content: 'Review the tests', timestamp: 1 }];
-  assert.deepEqual(context({ messages: original }, f.ctx).messages, original);
-  assert.equal(f.connectCalls.length, 0);
+test('messaging exposes identity only through the API and registers no context hook', async t => {
+  const f = fixture(t);
+  assert.equal(f.events.has('context'), false);
   await f.commands.get('messages').handler('join review', f.ctx);
-  f.backend.peers = async () => { throw Error('Context must not poll the broker'); };
-  f.backend.readBody = async () => { throw Error('Context must not read pending bodies'); };
-  p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'PRIVATE_BODY' }, 'pending');
-  const state = structuredClone(f.state);
-  const supplied = context({ messages: original }, f.ctx);
-  assert.equal(supplied.messages.length, 2); assert.equal(original.length, 1);
-  const identity = supplied.messages[1];
-  assert.equal(identity.role, 'custom'); assert.equal(identity.customType, 'pi-messaging.identity.v1'); assert.equal(identity.display, false);
-  assert.deepEqual(identity.details, { group: f.group, id: f.backend.peer.id, sessionId: 'local', displayName: 'local' });
-  assert.equal(JSON.stringify(supplied).includes('PRIVATE_BODY'), false);
-  assert.deepEqual(f.state, state); assert.equal(f.delivered.length, 0);
-  await execute(f, 'rename', { displayName: 'test-reviewer' });
-  const refreshed = context({ messages: supplied.messages }, f.ctx);
-  assert.equal(refreshed.messages.length, 2); assert.equal(refreshed.messages[1].details.displayName, 'test-reviewer');
-  f.activeTools.length = 0;
-  assert.deepEqual(context({ messages: refreshed.messages }, f.ctx).messages, original);
-  f.activeTools.push('peer_message');
-  for (const mode of ['rpc', 'json', 'print']) assert.deepEqual(context({ messages: refreshed.messages }, { ...f.ctx, mode }).messages, original);
-  await f.commands.get('messages').handler('leave', f.ctx);
-  assert.deepEqual(context({ messages: refreshed.messages }, f.ctx).messages, original);
-  await f.commands.get('messages').handler('join review', f.ctx); await f.backend.close();
-  assert.deepEqual(context({ messages: refreshed.messages }, f.ctx).messages, original);
+  const result = await execute(f, 'peers');
+  const value = JSON.parse(result.content[0].text);
+  assert.deepEqual(
+    { id: value.selfId, sessionId: value.selfSessionId, displayName: value.selfDisplayName },
+    { id: f.backend.peer.id, sessionId: 'local', displayName: 'local' },
+  );
+  assert.equal(f.delivered.some(([message]) => message.customType === 'pi-messaging.identity.v1'), false);
+  const tool = f.tools.get('peer_message');
+  const metadata = JSON.stringify({ description: tool.description, promptSnippet: tool.promptSnippet, promptGuidelines: tool.promptGuidelines });
+  for (const runtimeValue of [f.group.id, f.backend.peer.id, f.backend.peer.sessionId, String(f.backend.peer.lastSeen)]) {
+    assert.equal(metadata.includes(runtimeValue), false);
+  }
 });
 
 test('busy work cannot enable admission; settling idle admits one queued message', { timeout: 2000 }, async t => {
@@ -379,26 +367,11 @@ test('busy work cannot enable admission; settling idle admits one queued message
   assert.equal(f.state.groups[f.group.id].used, 1);
 });
 
-test('onboarding permits a bounded discovery/name sequence and never resets on another agent run', async t => {
-  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
-  const context = f.events.get('context'); f.activeTools.length = 0;
-  assert.equal(context({ messages: [] }, f.ctx).messages.length, 0);
-  f.activeTools.push('peer_message');
-  const first = context({ messages: [] }, f.ctx).messages[0]; assert.ok(first.content.includes(NAMING_GUIDANCE));
-  assert.ok(first.content.includes(QUIET_GUIDANCE));
-  const second = context({ messages: [first] }, f.ctx).messages[0];
-  assert.ok(second.content.includes(NAMING_GUIDANCE)); assert.equal(second.content.includes(QUIET_GUIDANCE), false);
-  const third = context({ messages: [second] }, f.ctx).messages[0];
-  assert.equal(third.content.includes(NAMING_GUIDANCE), false); assert.ok(third.content.length < first.content.length / 2);
-  assert.deepEqual(third.details, first.details);
-  await f.events.get('agent_start')({}, f.ctx);
-  assert.equal(context({ messages: [] }, f.ctx).messages[0].content.includes(NAMING_GUIDANCE), false);
-  await execute(f, 'rename', { displayName: 'test-reviewer' });
-  assert.equal(context({ messages: [] }, f.ctx).messages[0].details.displayName, 'test-reviewer');
-  await f.commands.get('messages').handler('leave', f.ctx); await f.commands.get('messages').handler('join review', f.ctx);
-  assert.ok(context({ messages: [] }, f.ctx).messages[0].content.includes(NAMING_GUIDANCE));
-  await execute(f, 'rename', { displayName: 'test-reviewer' });
-  assert.equal(context({ messages: [] }, f.ctx).messages[0].content.includes(NAMING_GUIDANCE), false, 'Successful naming ends reminders immediately');
+test('stationary tool guidance directs agents to the API without dynamic identity values', t => {
+  const f = fixture(t); const tool = f.tools.get('peer_message');
+  assert.ok(tool.promptGuidelines.includes(QUIET_GUIDANCE));
+  assert.match(tool.promptGuidelines.join('\n'), /action peers/i);
+  assert.match(tool.promptGuidelines.join('\n'), /conversation context/i);
 });
 
 test('human composition queues as the joined peer and inbox viewing/cancellation never enters model context', async t => {
