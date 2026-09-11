@@ -73,6 +73,30 @@ For a light terminal, both theme values should be `light`. Inside Neovim, run:
 
 The expected values are `light`, `background=light`, and `catppuccin-latte` (`dark`, `background=dark`, and `catppuccin-mocha` in dark mode).
 
+### Verify clipboard forwarding over Mosh
+
+Apply the updated dotfiles on both the local and remote machines. End the existing Mosh connection, reconnect normally, attach tmux, and reload its configuration:
+
+```bash
+tmux source-file ~/.tmux.conf
+tmux show-options -g set-clipboard
+```
+
+Verify the active remote server is the Homebrew Mosh 1.4 binary:
+
+```bash
+pid="$(pgrep -n mosh-server)"
+readlink "/proc/$pid/exe"
+```
+
+Test the transport from inside tmux:
+
+```bash
+printf 'mosh clipboard test' | tmux load-buffer -w -
+```
+
+Pasting locally should produce `mosh clipboard test`. Neovim `<leader>y` and tmux copy-mode `y`/Enter use the same OSC 52 path.
+
 ## Layout
 
 - `dot_*`, `private_*`: files managed into `$HOME`
