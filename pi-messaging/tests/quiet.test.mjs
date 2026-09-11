@@ -34,7 +34,7 @@ async function fixture(t, holdAdmission = false) {
     reserveCalls++; reservesInFlight++;
     try {
       const r = await reserve();
-      if (holdAdmission && r) { admitted.resolve(); await releaseAdmission.promise; }
+      if (holdAdmission && r.length > 0) { admitted.resolve(); await releaseAdmission.promise; }
       return r;
     } finally { reservesInFlight--; }
   };

@@ -28,7 +28,7 @@ function fixture(t) {
     getGroupSummary: async g => p.summary(state, g), peers: async g => Object.values(state.peers).filter(x => x.groupId === g.id),
     join: async (g, info) => { peer = p.joinPeer(state, g, info); return peer; },
     leave: async () => { if (peer) p.leavePeer(state, peer.id); peer = undefined; }, close: async () => { closed = true; },
-    heartbeat: async name => { if (peer) p.heartbeat(state, peer.id, name); }, onChange: () => () => {}, reserve: async () => null,
+    heartbeat: async name => { if (peer) p.heartbeat(state, peer.id, name); }, onChange: () => () => {}, reserve: async () => [],
     arm: async (g, limit) => p.arm(state, g, limit), pause: async g => p.pause(state, g),
     send: async (input, key) => { const m = p.prepareMessage(state, peer.id, input, key); bodies.set(m.id, input.text); return m; },
     listMessages: async g => Object.values(state.messages).filter(m => m.groupId === g.id).sort((a, b) => b.sequence - a.sequence),
@@ -358,13 +358,13 @@ test('busy work cannot enable admission; settling idle admits one queued message
   const f = fixture(t); let reserves = 0; let statusSeen;
   const status = new Promise(resolve => { statusSeen = resolve; });
   f.ctx.ui.setStatus = () => statusSeen(); f.ctx.isIdle = () => false;
-  f.backend.reserve = async () => { reserves++; return null; };
+  f.backend.reserve = async () => { reserves++; return []; };
   await f.events.get('agent_start')({}, f.ctx);
   await f.commands.get('messages').handler('join review', f.ctx); await status;
   assert.equal(reserves, 0); assert.equal(f.delivered.length, 0);
   p.arm(f.state, f.group, 1);
   const message = p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'quiet message' }, 'quiet');
-  f.backend.reserve = async () => { const r = p.admit(f.state, f.backend.peer.id, message.id); return r ? { ...r, envelope: p.envelope(f.state, message, 'quiet message') } : null; };
+  f.backend.reserve = async () => { const reservation = p.admit(f.state, f.backend.peer.id, message.id); return reservation ? [{ ...reservation, envelope: p.envelope(f.state, message, 'quiet message') }] : []; };
   let delivered; const delivery = new Promise(resolve => { delivered = resolve; });
   f.pi.sendMessage = (...args) => { f.delivered.push(args); delivered(); };
   f.ctx.isIdle = () => true; await f.events.get('agent_settled')({}, f.ctx); await delivery;

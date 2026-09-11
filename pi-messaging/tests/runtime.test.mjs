@@ -4,38 +4,67 @@ import { randomUUID } from 'node:crypto';
 import { createJiti } from 'jiti';
 const { MessagingRuntime } = await createJiti(import.meta.url).import('../src/runtime.ts');
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
-function fixture() {
+function reservation(group, peer, index) {
+  const message = { id: randomUUID(), sequence: index + 1 };
+  const value = { group, peerId: peer.id, message, attemptId: randomUUID(), round: 1 };
+  value.envelope = { version: 1, authorityId: group.authorityId, groupId: group.id, messageId: message.id,
+    recipientPeerId: peer.id, senderPeerId: randomUUID(), senderName: `Sender ${index + 1}`, createdAt: 10 + index,
+    text: `peer text ${index + 1}\x1b[31m` };
+  return value;
+}
+function fixture(count = 1) {
   const group = { authorityId: randomUUID(), id: randomUUID(), label: 'review' };
   const peer = { id: randomUUID(), groupId: group.id };
-  const r = { group, peerId: peer.id, message: { id: randomUUID() }, attemptId: randomUUID(), round: 1 };
-  r.envelope = { version: 1, authorityId: group.authorityId, groupId: group.id, messageId: r.message.id, recipientPeerId: peer.id, senderPeerId: randomUUID(), senderName: 'Alice', createdAt: 10, text: 'peer text\x1b[31m' };
+  const reservations = Array.from({ length: count }, (_, index) => reservation(group, peer, index));
   const calls = []; const observed = []; const errors = [];
-  let next = r; let ready = true;
-  const backend = { peer, closed: false, getGroupSummary: async () => ({ group, remaining: 11, mode: 'armed' }), reserve: async () => { const value = next; next = null; return value; }, observe: async x => { observed.push(x); }, leave: async () => {}, heartbeat: async () => {}, onChange: () => () => {} };
+  let next = reservations; let ready = true;
+  const backend = { peer, closed: false, getGroupSummary: async () => ({ group, remaining: 11, mode: 'armed' }), reserve: async () => { const value = next; next = []; return value; },
+    observe: async values => { observed.push(values); }, leave: async () => {}, heartbeat: async () => {}, onChange: () => () => {} };
   const runtime = new MessagingRuntime(backend, group, { ready: () => ready, deliver: (...args) => calls.push(args), status: () => {}, error: text => errors.push(text) });
-  return { runtime, backend, group, r, calls, observed, errors, setReady: x => { ready = x; } };
+  return { runtime, backend, group, reservations, calls, observed, errors, setReady: value => { ready = value; } };
 }
 
-test('idle readiness hands off attributed custom content once as a follow-up and receipts never trigger a model turn', async () => {
+test('idle readiness hands off one batch-shaped custom message and one receipt observes it', async () => {
   const f = fixture(); await f.runtime.wake();
   assert.equal(f.calls.length, 1); const [message, options] = f.calls[0];
   assert.deepEqual(options, { triggerTurn: true, deliverAs: 'followUp' });
   assert.equal(message.customType, 'pi-messaging.peer.v1'); assert.equal(message.display, true);
-  assert.ok(message.content.includes('Alice')); assert.ok(message.content.includes('peer text\\u001b'));
+  assert.deepEqual(message.details.messages.map(item => item.messageId), f.reservations.map(item => item.message.id));
+  assert.ok(message.content.includes('Sender 1')); assert.ok(message.content.includes('peer text 1\\u001b'));
   assert.equal(message.content.includes('\x1b'), false);
-  assert.equal(await f.runtime.receipt({ ...message, role: 'custom', details: { ...message.details, attemptId: randomUUID() } }), false);
+  assert.equal(await f.runtime.receipt({ ...message, role: 'custom', details: { ...message.details, peerId: randomUUID() } }), false);
   assert.equal(await f.runtime.receipt({ ...message, role: 'assistant' }), false);
   assert.equal(await f.runtime.receipt({ ...message, role: 'custom' }), true);
   assert.equal(await f.runtime.receipt({ ...message, role: 'custom' }), false);
-  assert.equal(f.observed.length, 1); assert.equal(f.calls.length, 1);
+  assert.equal(f.observed.length, 1); assert.equal(f.observed[0].length, 1); assert.equal(f.calls.length, 1);
   await f.runtime.stop();
+});
+
+test('three reservations are escaped and delivered together in publication order', async () => {
+  const f = fixture(3); await f.runtime.wake();
+  assert.equal(f.calls.length, 1); const [message] = f.calls[0];
+  assert.deepEqual(message.details.messages.map(item => item.messageId), f.reservations.map(item => item.message.id));
+  for (let index = 1; index <= 3; index++) assert.ok(message.content.includes(`peer text ${index}\\u001b`));
+  assert.ok(message.content.indexOf('peer text 1') < message.content.indexOf('peer text 2'));
+  assert.ok(message.content.indexOf('peer text 2') < message.content.indexOf('peer text 3'));
+});
+
+test('partial, duplicate, reordered, and forged batch receipts observe nothing', async () => {
+  const f = fixture(3); await f.runtime.wake(); const [message] = f.calls[0]; const items = message.details.messages;
+  for (const messages of [items.slice(0, 2), [items[0], items[0], items[2]], [items[1], items[0], items[2]],
+    [items[0], { ...items[1], attemptId: randomUUID() }, items[2]]]) {
+    assert.equal(await f.runtime.receipt({ ...message, role: 'custom', details: { ...message.details, messages } }), false);
+  }
+  assert.equal(f.observed.length, 0);
+  assert.equal(await f.runtime.receipt({ ...message, role: 'custom' }), true);
+  assert.equal(f.observed.length, 1); assert.equal(f.observed[0].length, 3);
 });
 
 test('leave during an asynchronous reservation never touches the replacement context or refunds', async () => {
   const f = fixture(); const waiting = deferred(); const started = deferred();
   f.backend.reserve = async () => { started.resolve(); return waiting.promise; };
   const pending = f.runtime.wake(); await started.promise;
-  await f.runtime.stop(); waiting.resolve(f.r); await pending;
+  await f.runtime.stop(); waiting.resolve(f.reservations); await pending;
   assert.equal(f.calls.length, 0); assert.equal(f.observed.length, 0); assert.equal(f.errors.length, 0);
 });
 
@@ -48,12 +77,13 @@ test('retry/compaction gaps defer admission; simultaneous notifications coalesce
   await f.runtime.stop();
 });
 
-test('work starting during reservation uses a quiet follow-up rather than steering or reserving twice', async () => {
-  const f = fixture(); const waiting = deferred(); const started = deferred(); let reserves = 0;
+test('work starting during reservation uses one quiet follow-up rather than steering or reserving twice', async () => {
+  const f = fixture(3); const waiting = deferred(); const started = deferred(); let reserves = 0;
   f.backend.reserve = async () => { reserves++; started.resolve(); return waiting.promise; };
   const pending = f.runtime.wake(); await started.promise;
-  f.setReady(false); waiting.resolve(f.r); await pending;
+  f.setReady(false); waiting.resolve(f.reservations); await pending;
   assert.equal(f.calls.length, 1); assert.deepEqual(f.calls[0][1], { triggerTurn: true, deliverAs: 'followUp' });
+  assert.equal(f.calls[0][0].details.messages.length, 3);
   await f.runtime.wake(); assert.equal(reserves, 1); assert.equal(f.observed.length, 0);
   await f.runtime.stop();
 });
@@ -66,8 +96,9 @@ test('uncertain transport outcome stops automatic admissions and emits one diagn
   await f.runtime.stop();
 });
 
-test('matching synchronous receipt is accepted because correlation is installed before the Pi call', async () => {
-  const f = fixture(); let receipt;
-  const runtime = new MessagingRuntime(f.backend, f.group, { ready: () => true, status: () => {}, error: e => { throw Error(e); }, deliver: message => { receipt = runtime.receipt({ ...message, role: 'custom' }); } });
-  await runtime.wake(); assert.equal(await receipt, true); assert.equal(f.observed.length, 1); await runtime.stop();
+test('matching synchronous receipt is accepted because the complete batch is installed before the Pi call', async () => {
+  const f = fixture(3); let receipt;
+  const runtime = new MessagingRuntime(f.backend, f.group, { ready: () => true, status: () => {}, error: error => { throw Error(error); },
+    deliver: message => { receipt = runtime.receipt({ ...message, role: 'custom' }); } });
+  await runtime.wake(); assert.equal(await receipt, true); assert.equal(f.observed.length, 1); assert.equal(f.observed[0].length, 3); await runtime.stop();
 });
