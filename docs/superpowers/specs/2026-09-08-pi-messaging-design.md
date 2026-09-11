@@ -4,6 +4,10 @@ Date: 2026-09-08
 Status: **The user approved messaging implementation and autonomous testing, using cheap models.**
 Scope: messaging only. Project tracking, worktree lifecycle changes, knowledge storage, and intent promotion are not included.
 
+## Supersession note
+
+The approved [cache-stability and bounded-batching design](2026-09-11-pi-messaging-cache-and-batching-design.md) supersedes this document's transient identity-context clauses, one-message reservation/delivery clauses, and ability to queue without unreserved current-round allowance. Current behavior uses API-only identity, reserves allowance capacity at enqueue time, bounds each sender and recipient, and atomically delivers up to eight eligible messages in one turn. The remaining trust, participation, human-control, and conservative no-replay/no-refund decisions still apply.
+
 ## User-visible contract
 
 1. **Explicit participation.** Independently launched, saved TUI sessions join a named group. When armed, messages can wake idle sessions; busy sessions defer incoming messages until their current work finishes. The extension never launches agents.

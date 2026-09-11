@@ -2,6 +2,10 @@
 
 The user chose quiet after reviewing enqueue-and-continue behavior and deferring incoming messages until a natural stopping point. This supersedes the original busy-session steering default. Implement inline under the existing autonomous implementation/testing approval; no coordinator/task engine, urgent mode, automatic join/arm, or broker lifecycle work.
 
+## Supersession note
+
+The approved [cache-stability and bounded-batching design](2026-09-11-pi-messaging-cache-and-batching-design.md) supersedes this document's transient onboarding/identity context and singular-message delivery wording. Current quiet delivery still waits for a full idle boundary and uses Pi follow-up for the idle-to-busy race, but it atomically admits all currently eligible messages up to eight as one combined turn. Identity is obtained through `peer_message peers`, never a context hook.
+
 ## Delivery
 
 - While `ctx.isIdle()` is false (including active work, retry, compaction, and queued continuation), do not start a new reservation. Messages normally remain queued in the broker without spending allowance.
