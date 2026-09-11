@@ -196,6 +196,7 @@ test('request preflight fails closed if loop_control became unavailable', async 
   f.externalSetActiveTools(['read']);
   const patch = await f.events.get('before_agent_start')({ systemPrompt: 'base' }, c.ctx);
   assert.equal(patch, undefined); assert.equal(f.entries.at(-1).data.active, false);
+  assert.equal(await f.events.get('before_agent_start')({ systemPrompt: 'base' }, c.ctx), undefined);
   assert.match(f.entries.at(-1).data.reason, /unavailable/i); assert.equal(f.messages.length, 1);
   assert.ok(c.notifications.some(item => item.level === 'warning' && /unavailable/i.test(item.message)));
 });

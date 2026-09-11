@@ -1,7 +1,7 @@
 # Pi Loop Prompt-Cache Stability Design
 
 Date: 2026-09-11
-Status: Draft for user review
+Status: Implemented, pending rollout
 Branch: `fix/pi-loop-cache-stability`
 
 ## Problem

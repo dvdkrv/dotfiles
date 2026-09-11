@@ -11,7 +11,7 @@ test('messaging registration does not reset or govern the separate loop extensio
   const pi = {
     on: (name, handler) => { const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list); },
     registerTool: tool => { tools.set(tool.name, tool); activeTools.push(tool.name); }, registerCommand: (name, command) => commands.set(name, command),
-    getActiveTools: () => [...activeTools], setActiveTools: names => { activeTools = [...names]; },
+    getActiveTools: () => [...activeTools], setActiveTools: () => { throw new Error('neither extension may mutate active tools'); },
     registerMessageRenderer: () => {}, appendEntry: (customType, data) => entries.push({ type: 'custom', customType, data }),
     sendUserMessage: (...args) => userMessages.push(args), sendMessage: () => { throw Error('Unjoined messaging must not deliver'); },
   };
@@ -28,5 +28,6 @@ test('messaging registration does not reset or govern the separate loop extensio
   assert.equal(userMessages.length, 2);
   assert.deepEqual(userMessages[1], ['independent', { deliverAs: 'followUp' }]);
   assert.equal(connections, 0);
+  assert.deepEqual(activeTools, ['loop_control', 'peer_message']);
   for (const handler of handlers.get('session_shutdown')) await handler({}, ctx);
 });

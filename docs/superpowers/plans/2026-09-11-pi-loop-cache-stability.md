@@ -31,7 +31,7 @@
 - Consumes: Pi `getActiveTools(): string[]`, `before_agent_start`, `agent_settled`, and existing persisted `LoopState`.
 - Produces: `toolIsAvailable(): boolean`; constant `ACTIVE_LOOP_INSTRUCTION`; unchanged `loop_control` input/result contract.
 
-- [ ] **Step 1: Make tool mutation fail loudly in the test fixture**
+- [x] **Step 1: Make tool mutation fail loudly in the test fixture**
 
 Change the fixture to retain externally controlled tools while rejecting extension mutations:
 
@@ -54,7 +54,7 @@ function setup({ initialTools = ['read', 'loop_control'], failMessageAt } = {}) 
 
 Replace assertions that expected removal/re-addition with assertions that the complete tool list remains unchanged after startup, start, decision, settlement, stop, duplicate calls, and session replacement.
 
-- [ ] **Step 2: Add failing schema and stable-prompt tests**
+- [x] **Step 2: Add failing schema and stable-prompt tests**
 
 Add tests with these exact assertions:
 
@@ -79,7 +79,7 @@ test('active loop instruction is byte-stable across continuations', async () => 
 
 Also assert an inactive `before_agent_start` returns `undefined`.
 
-- [ ] **Step 3: Add failing unavailable-tool tests**
+- [x] **Step 3: Add failing unavailable-tool tests**
 
 Cover all admission boundaries:
 
@@ -106,7 +106,7 @@ test('continuation fails closed if an external actor disables loop_control', asy
 
 Add equivalent assertions for restored waiting state and for disablement immediately before `before_agent_start`: persisted state becomes inactive, no instruction patch is returned, no automatic message is sent, and a warning is shown.
 
-- [ ] **Step 4: Run focused tests and verify RED**
+- [x] **Step 4: Run focused tests and verify RED**
 
 Run:
 
@@ -116,7 +116,7 @@ node --test pi-loop-package/tests/loop.test.mjs
 
 Expected failures: calls to forbidden `setActiveTools`, existing removal assertions, present prompt metadata, missing availability validation, and/or unstable behavior. Existing safety cases not involving these changes must continue to pass.
 
-- [ ] **Step 5: Implement the stationary tool contract**
+- [x] **Step 5: Implement the stationary tool contract**
 
 In `loop.ts`, add:
 
@@ -138,7 +138,7 @@ Before `startLoop()` in the command handler, reject an unavailable tool with a w
 
 Do not change state shape, decision order, iteration arithmetic, context high-water logic, or queue handling.
 
-- [ ] **Step 6: Run focused tests and verify GREEN**
+- [x] **Step 6: Run focused tests and verify GREEN**
 
 Run:
 
@@ -149,7 +149,7 @@ npm run typecheck
 
 Expected: all loop unit tests pass and TypeScript reports no errors.
 
-- [ ] **Step 7: Review the production diff for forbidden mutations**
+- [x] **Step 7: Review the production diff for forbidden mutations**
 
 Run:
 
@@ -161,7 +161,7 @@ git diff -- pi-loop-package/extensions/loop.ts pi-loop-package/tests/loop.test.m
 
 Expected: the negative search succeeds, whitespace check succeeds, and the diff contains no unrelated changes.
 
-- [ ] **Step 8: Commit Task 1 signed**
+- [x] **Step 8: Commit Task 1 signed**
 
 ```bash
 git add pi-loop-package/extensions/loop.ts pi-loop-package/tests/loop.test.mjs
@@ -187,7 +187,7 @@ Expected: signature status `G`.
 - Consumes: Task 1 stationary `loop_control`, scripted `ModelRuntime.streamSimple`, and Pi request context `systemPrompt`/`tools`.
 - Produces: a provider-free acceptance test that proves two requests have equal request-visible cache structure.
 
-- [ ] **Step 1: Strengthen the real SDK request capture**
+- [x] **Step 1: Strengthen the real SDK request capture**
 
 Change request capture to retain canonical definitions:
 
@@ -214,7 +214,7 @@ assert.equal(session.getActiveToolNames().includes('loop_control'), true);
 
 `getActiveToolNames()` is present in both target SDK declarations. Keep the provider scripted, the third-request assertion fatal, and usage zero.
 
-- [ ] **Step 2: Make coexistence reject tool mutation**
+- [x] **Step 2: Make coexistence reject tool mutation**
 
 In `pi-messaging/tests/coexistence.test.mjs`, replace the mutable `setActiveTools` mock with:
 
@@ -224,7 +224,7 @@ setActiveTools: () => { throw new Error('neither extension may mutate active too
 
 Keep the existing assertions proving messaging does not connect, reset loop state, or govern continuation. Add a final assertion that both `loop_control` and `peer_message` remain in `activeTools`.
 
-- [ ] **Step 3: Run focused acceptance tests**
+- [x] **Step 3: Run focused acceptance tests**
 
 Run:
 
@@ -234,18 +234,18 @@ PI_OFFLINE=1 node --test pi-loop-package/tests/loop-sdk.test.mjs pi-messaging/te
 
 Expected: both tests pass, exactly two scripted provider requests occur, and no active-tool mutation occurs.
 
-- [ ] **Step 4: Run both Pi SDK versions**
+- [x] **Step 4: Run both Pi SDK versions**
 
 Run the SDK test once with the repository dependency (Pi 0.82.0) and once with the installed SDK path (Pi 0.84.1):
 
 ```bash
 PI_OFFLINE=1 node --test pi-loop-package/tests/loop-sdk.test.mjs
-PI_LOOP_PI_SDK=/home/linuxbrew/.linuxbrew/lib/node_modules/@earendil-works/pi-coding-agent PI_OFFLINE=1 node --test pi-loop-package/tests/loop-sdk.test.mjs
+PI_LOOP_PI_SDK=/home/linuxbrew/.linuxbrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.js PI_OFFLINE=1 node --test pi-loop-package/tests/loop-sdk.test.mjs
 ```
 
 Expected: one acceptance test passes in each run with no network/model inference.
 
-- [ ] **Step 5: Update user documentation**
+- [x] **Step 5: Update user documentation**
 
 In `pi-loop-package/README.md`, replace dynamic enable/disable language with:
 
@@ -255,7 +255,7 @@ In `pi-loop-package/README.md`, replace dynamic enable/disable language with:
 
 Document unavailable-tool fail-closed behavior, the fixed schema overhead, the one-time loop entry/exit prompt change, and the distinction between cache-prefix stability and a guaranteed provider hit percentage. Retain all existing safety-stop and lifecycle documentation.
 
-- [ ] **Step 6: Run the complete verification matrix**
+- [x] **Step 6: Run the complete verification matrix**
 
 Run:
 
@@ -269,7 +269,7 @@ git diff --check
 
 Then run all loop tests under Node 22.19.0 and 24.20.0 using the locally available binaries. Expected: zero failures/skips under the mandatory broker gate, clean type/lint/repository checks, and all loop tests pass on both Node versions.
 
-- [ ] **Step 7: Perform a bounded review**
+- [x] **Step 7: Perform a bounded review**
 
 Review the final diff against the specification with emphasis on:
 
@@ -282,7 +282,7 @@ Review the final diff against the specification with emphasis on:
 
 Record concrete findings, dispositions, and verification evidence in `docs/superpowers/reviews/2026-09-11-pi-loop-cache-stability.md`. Fix all Critical and Important findings test-first before proceeding.
 
-- [ ] **Step 8: Mark plan execution accurately and commit signed**
+- [x] **Step 8: Mark plan execution accurately and commit signed**
 
 Update this plan's completed checkboxes and change the design status to `Implemented, pending rollout`. Do not claim a live 99% hit rate. Then run:
 
@@ -299,6 +299,6 @@ git log -1 --format='%h %G? %s'
 
 Expected: signature status `G` and a clean worktree.
 
-- [ ] **Step 9: Stop at the rollout boundary**
+- [x] **Step 9: Stop at the rollout boundary**
 
 Report commits, exact verification counts, and any observational limitations. Do not reload Pi, change global package settings, modify the SAP session/pane, merge, or push without separate explicit authorization.
