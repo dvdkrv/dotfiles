@@ -68,9 +68,9 @@ The first active tool call sets `decisionRecorded = true` before any persistence
 
 - [ ] **Step 4: Implement bounded settled scheduling**
 
-In `agent_settled`, require an active recorded continue decision. Stop when the next iteration reaches the configured maximum or known context percent is at least 85. Otherwise increment once, reset `shouldContinue`/`decisionRecorded`, persist `continuedAt`, enable the tool, and queue one follow-up. Catch enqueue failure, stop, clear status, and notify a warning.
+Use `agent_end` only to retain the highest known context percentage across low-level retries; it must never schedule work. In `agent_settled`, require an active recorded continue decision. Stop when the next iteration reaches the configured maximum or either the retained high-water mark or current known context percent is at least 85. Otherwise increment once, reset `shouldContinue`/`decisionRecorded` and the context high-water mark, persist `continuedAt`, enable the tool, and queue one follow-up. Catch enqueue failure, stop, clear status, and notify a warning.
 
-On `session_start`, restore the latest valid entry. If it is active with `shouldContinue`, stop it as interrupted; otherwise synchronize tool activation to active/inactive without triggering work.
+On every `session_start`, first reset in-memory loop/latch/context state, then restore the latest valid entry from the new active branch. If it is active with `shouldContinue`, stop it as interrupted; otherwise synchronize tool activation to active/inactive without triggering work. A replacement session without a loop entry must remain inactive.
 
 Parse `--max` strictly as a final decimal integer; reject values outside 1–100 instead of silently falling back. Human inactive stop remains idempotent without persistence.
 

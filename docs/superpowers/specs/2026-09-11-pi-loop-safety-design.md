@@ -36,7 +36,7 @@ A stale control invocation while inactive or after a recorded decision returns a
 
 ## Settled transition and bounds
 
-`agent_settled` is the only continuation scheduler. If no decision was recorded, it stops the loop. If stop was chosen, the tool execution already made the loop inactive. For a continue decision it checks, in order:
+`agent_settled` is the only continuation scheduler. `agent_end` may only record the highest known context percentage across low-level retries so an automatic compaction cannot hide a dangerous pre-compaction value; it never queues work. If no decision was recorded, settlement stops the loop. If stop was chosen, the tool execution already made the loop inactive. For a continue decision it checks, in order:
 
 1. the next iteration does not reach `maxIterations`;
 2. known `ctx.getContextUsage().percent` is below 85;
@@ -44,7 +44,7 @@ A stale control invocation while inactive or after a recorded decision returns a
 
 The initial run counts toward the maximum. State starts at iteration zero; each accepted continue increments before the next run. `--max 1` therefore permits only the initial run. Unknown context usage does not invent a failure, but known usage at or above 85% stops with a visible warning and persisted reason.
 
-If follow-up enqueue throws, the extension stops and persists the failure instead of remaining active. A restored active state with `shouldContinue: true` represents an interrupted decision/scheduling boundary and is finalized inactive with an explicit reason; the human may start a new loop. Restored active state still awaiting a decision remains active but does not automatically trigger inference.
+If follow-up enqueue throws, the extension stops and persists the failure instead of remaining active. Every `session_start` resets volatile state before scanning the new active branch, so a replacement session with no loop entry cannot inherit the prior session's loop. A restored active state with `shouldContinue: true` represents an interrupted decision/scheduling boundary and is finalized inactive with an explicit reason; the human may start a new loop. Restored active state still awaiting a decision remains active but does not automatically trigger inference.
 
 ## Human controls and compatibility
 
