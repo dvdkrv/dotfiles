@@ -30,7 +30,9 @@ While one active iteration awaits a decision, the agent can call `loop_control` 
 - `action: "continue"` records one decision; after the run fully settles, the extension queues one follow-up iteration.
 - `action: "stop"` ends the loop.
 
-The result is terminating, so the control call does not cause another paid model response inside the same run. The extension disables `loop_control` immediately after a decision and whenever no loop is active; its prompt guidance is absent at those times. Duplicate, parallel, stale, and inactive calls terminate without persisting another state transition.
+The result is terminating, so the control call does not cause another paid model response inside the same run. Duplicate, parallel, stale, and inactive calls terminate without persisting another state transition.
+
+`loop_control` stays registered and active so its schema remains stable across requests. It has no active-only prompt snippet or guideline. Loop instructions are injected only while a loop is active, using identical text on every continuation. The extension never changes the active-tool list. If a user, preset, or another extension disables `loop_control`, a new loop is rejected and an active/restored loop stops before another continuation.
 
 If the agent settles without choosing continue, the loop stops. `agent_settled` is the only continuation scheduler, so one decision can queue at most one next run.
 
@@ -43,7 +45,13 @@ The loop stops before another continuation when:
 - the next follow-up cannot be queued;
 - a reload resumes state after a continue decision was persisted but before scheduling was known to complete.
 
-The context guard is not a monetary budget. Pi does not expose stable cross-provider pricing/session-cost controls to this extension. Choose a lower explicit `--max` for expensive models or large contexts.
+The context guard is not a monetary budget. Choose a lower explicit `--max` for expensive models or large contexts.
+
+## Prompt-cache behavior
+
+The tool definition and active-tool list remain stationary across loop iterations. The active-loop system-prompt suffix is constant and contains no prompt, counter, limit, context percentage, timestamp, or reason. Consequently, warm continuations expose identical system prompts and tool definitions; only the normal conversation tail grows.
+
+The first loop request can change the prompt once when the loop instruction appears, and the first non-loop request after completion can change it once when that instruction disappears. A fixed schema adds a small constant token overhead, but avoids repeatedly invalidating a much larger cached prefix. This guarantees no avoidable loop-owned prefix mutation—not a 99% provider-reported cache hit rate. Cold caches, expiry, eviction, and large new tool/assistant outputs remain outside the extension's control. `PI_CACHE_RETENTION=long` may reduce expiry where supported, but cannot repair prompt mutations.
 
 ## Session lifecycle
 

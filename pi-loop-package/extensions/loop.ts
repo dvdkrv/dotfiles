@@ -6,6 +6,7 @@ const DEFAULT_MAX_ITERATIONS = 12;
 const MAX_ITERATIONS = 100;
 const MAX_CONTEXT_PERCENT = 85;
 const TOOL_NAME = "loop_control";
+const ACTIVE_LOOP_INSTRUCTION = "An autonomous prompt loop is active. At the end of this run, call loop_control exactly once as your sole final tool call. Stop if the objective is complete; otherwise continue.";
 
 type LoopState = {
 	active: boolean;
@@ -39,13 +40,8 @@ export default function loopExtension(pi: ExtensionAPI): void {
 	let decisionRecorded = false;
 	let peakContextPercent: number | undefined;
 
-	function setControlEnabled(enabled: boolean): void {
-		const current = pi.getActiveTools();
-		const present = current.includes(TOOL_NAME);
-		if (present === enabled) return;
-		pi.setActiveTools(enabled
-			? [...current, TOOL_NAME]
-			: current.filter(name => name !== TOOL_NAME));
+	function toolIsAvailable(): boolean {
+		return pi.getActiveTools().includes(TOOL_NAME);
 	}
 
 	function persist(extra: Record<string, unknown> = {}): void {
@@ -56,7 +52,6 @@ export default function loopExtension(pi: ExtensionAPI): void {
 		const wasActive = state.active;
 		state = { ...state, active: false, shouldContinue: false };
 		decisionRecorded = true;
-		setControlEnabled(false);
 		if (persistTransition && wasActive) persist({ reason, stoppedAt: Date.now() });
 	}
 
@@ -70,25 +65,19 @@ export default function loopExtension(pi: ExtensionAPI): void {
 		};
 		decisionRecorded = false;
 		peakContextPercent = undefined;
-		setControlEnabled(true);
 		persist({ startedAt: Date.now() });
 	}
 
 	pi.registerTool({
 		name: TOOL_NAME,
 		label: "Loop Control",
-		description: "Record the one final stop/continue decision for the active prompt-loop iteration",
+		description: "Record the one final stop/continue decision for a prompt loop. Call only when the current system prompt says an autonomous loop is active.",
 		parameters: Type.Object({
 			action: StringEnum(["stop", "continue"] as const),
 			reason: Type.Optional(Type.String()),
 		}),
-		promptSnippet: "Finish an active prompt-loop iteration with one stop/continue decision",
-		promptGuidelines: [
-			"When an active prompt-loop iteration is complete, call loop_control exactly once as your sole final tool call: stop if the objective is complete, otherwise continue.",
-		],
 		async execute(_toolCallId, params) {
 			if (!state.active || decisionRecorded) {
-				setControlEnabled(false);
 				return {
 					content: [{ type: "text", text: state.active ? "Loop decision already recorded." : "Loop is already inactive." }],
 					details: state,
@@ -98,7 +87,6 @@ export default function loopExtension(pi: ExtensionAPI): void {
 
 			// Set before persistence so parallel tool calls cannot record two decisions.
 			decisionRecorded = true;
-			setControlEnabled(false);
 			if (params.action === "stop") {
 				stopLoop(params.reason || "Stopped by agent");
 				return {
@@ -165,6 +153,11 @@ export default function loopExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
+			if (!toolIsAvailable()) {
+				ctx.ui.notify("Cannot start loop: loop_control is unavailable", "warning");
+				return;
+			}
+
 			startLoop(body, max);
 			ctx.ui.setStatus("loop", `loop ${state.iteration}/${state.maxIterations}`);
 			ctx.ui.notify(`Loop started (max ${state.maxIterations})`, "info");
@@ -190,18 +183,24 @@ export default function loopExtension(pi: ExtensionAPI): void {
 			break;
 		}
 		decisionRecorded = state.shouldContinue;
-		if (state.active && state.shouldContinue) stopLoop("Interrupted after a continuation decision; restart explicitly");
-		else setControlEnabled(state.active);
+		if (state.active && state.shouldContinue) {
+			stopLoop("Interrupted after a continuation decision; restart explicitly");
+		} else if (state.active && !toolIsAvailable()) {
+			stopLoop("loop_control unavailable while restoring loop");
+			ctx.ui.notify("Loop stopped: loop_control is unavailable", "warning");
+		}
 		ctx.ui.setStatus("loop", state.active ? `loop ${state.iteration}/${state.maxIterations}` : undefined);
 	});
 
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		if (!state.active) return;
-		return {
-			systemPrompt:
-				event.systemPrompt
-				+ "\n\nAn autonomous prompt loop is active. At the end of this run, call loop_control exactly once as your sole final tool call. Stop if the objective is complete; otherwise continue.",
-		};
+		if (!toolIsAvailable()) {
+			stopLoop("loop_control unavailable before loop request");
+			ctx.ui.setStatus("loop", undefined);
+			ctx.ui.notify("Loop stopped: loop_control is unavailable", "warning");
+			return;
+		}
+		return { systemPrompt: event.systemPrompt + "\n\n" + ACTIVE_LOOP_INSTRUCTION };
 	});
 
 	pi.on("tool_result", async (event, ctx) => {
@@ -220,6 +219,13 @@ export default function loopExtension(pi: ExtensionAPI): void {
 		if (!decisionRecorded || !state.shouldContinue) {
 			stopLoop("Agent did not request continue");
 			ctx.ui.notify("Loop stopped: agent chose not to continue", "info");
+			ctx.ui.setStatus("loop", undefined);
+			return;
+		}
+
+		if (!toolIsAvailable()) {
+			stopLoop("loop_control unavailable before loop continuation");
+			ctx.ui.notify("Loop stopped: loop_control is unavailable", "warning");
 			ctx.ui.setStatus("loop", undefined);
 			return;
 		}
@@ -251,7 +257,6 @@ export default function loopExtension(pi: ExtensionAPI): void {
 		persist({ continuedAt: Date.now() });
 		ctx.ui.setStatus("loop", `loop ${state.iteration}/${state.maxIterations}`);
 		try {
-			setControlEnabled(true);
 			pi.sendUserMessage(state.prompt, { deliverAs: "followUp" });
 		} catch (error) {
 			stopLoop("Failed to queue loop continuation");

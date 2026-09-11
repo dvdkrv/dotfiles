@@ -40,7 +40,14 @@ test('real Pi SDK terminates each loop decision and schedules exactly one next i
   runtime.streamSimple = (_model, context) => {
     assert.ok(requests.length < 2, 'terminating loop control must prevent repeated model calls');
     const index = requests.length;
-    requests.push({ tools: context.tools?.map(tool => tool.name) ?? [] });
+    requests.push({
+      systemPrompt: context.systemPrompt,
+      tools: (context.tools ?? []).map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      })),
+    });
     const action = index === 0 ? 'continue' : 'stop';
     const message = {
       role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(),
@@ -81,8 +88,10 @@ test('real Pi SDK terminates each loop decision and schedules exactly one next i
   await delay(50);
 
   assert.equal(requests.length, 2);
-  assert.ok(requests.every(request => request.tools.includes('loop_control')));
-  assert.equal(session.getActiveToolNames().includes('loop_control'), false);
+  assert.equal(requests[0].systemPrompt, requests[1].systemPrompt);
+  assert.deepEqual(requests[0].tools, requests[1].tools);
+  assert.ok(requests[0].tools.some(tool => tool.name === 'loop_control'));
+  assert.equal(session.getActiveToolNames().includes('loop_control'), true);
   const states = sessionManager.getBranch().filter(entry => entry.type === 'custom' && entry.customType === 'loop-state').map(entry => entry.data);
   assert.equal(states.filter(state => state.shouldContinue).length, 1);
   assert.equal(states.filter(state => state.continuedAt).length, 1);
