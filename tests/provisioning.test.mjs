@@ -387,6 +387,22 @@ test('zsh and tmux integrations are guarded and portable', () => {
   assert.doesNotMatch(tmux, /"pbcopy"/);
 });
 
+test('tmux loads a Mosh-compatible OSC 52 clipboard capability', () => {
+  const socket = `dotfiles-osc52-${process.pid}-${Date.now()}`;
+  const tmuxConfig = new URL('../dot_tmux.conf', import.meta.url).pathname;
+  const result = spawnSync('tmux', [
+    '-L', socket,
+    '-f', '/dev/null',
+    'start-server', ';',
+    'source-file', tmuxConfig, ';',
+    'show-options', '-sv', 'terminal-overrides', ';',
+    'kill-server',
+  ], { encoding: 'utf8' });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /xterm-256color:Ms=.*52;.*%p1.*%ec.*%p2/);
+});
+
 test('clipboard helper uses the first supported backend', () => {
   const home = mkdtempSync(join(tmpdir(), 'dotfiles-clipboard-'));
   const bin = join(home, 'bin');
