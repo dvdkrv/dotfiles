@@ -2,6 +2,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
+const DEFAULT_MAX_ITERATIONS = 12;
+const MAX_ITERATIONS = 100;
+const MAX_CONTEXT_PERCENT = 85;
+const TOOL_NAME = "loop_control";
+
 type LoopState = {
 	active: boolean;
 	prompt: string;
@@ -16,66 +21,99 @@ function isLoopState(value: unknown): value is LoopState {
 	return typeof state.active === "boolean"
 		&& typeof state.prompt === "string"
 		&& Number.isInteger(state.iteration)
+		&& typeof state.iteration === "number"
+		&& state.iteration >= 0
 		&& Number.isInteger(state.maxIterations)
+		&& typeof state.maxIterations === "number"
+		&& state.maxIterations >= 1
+		&& state.maxIterations <= MAX_ITERATIONS
 		&& typeof state.shouldContinue === "boolean";
 }
 
+function defaultState(): LoopState {
+	return { active: false, prompt: "", iteration: 0, maxIterations: DEFAULT_MAX_ITERATIONS, shouldContinue: false };
+}
+
 export default function loopExtension(pi: ExtensionAPI): void {
-	let state: LoopState = {
-		active: false,
-		prompt: "",
-		iteration: 0,
-		maxIterations: 100,
-		shouldContinue: false,
-	};
+	let state = defaultState();
+	let decisionRecorded = false;
+	let peakContextPercent: number | undefined;
+
+	function setControlEnabled(enabled: boolean): void {
+		const current = pi.getActiveTools();
+		const present = current.includes(TOOL_NAME);
+		if (present === enabled) return;
+		pi.setActiveTools(enabled
+			? [...current, TOOL_NAME]
+			: current.filter(name => name !== TOOL_NAME));
+	}
 
 	function persist(extra: Record<string, unknown> = {}): void {
 		pi.appendEntry("loop-state", { ...state, ...extra });
 	}
 
-	function stopLoop(reason: string): void {
+	function stopLoop(reason: string, persistTransition = true): void {
+		const wasActive = state.active;
 		state = { ...state, active: false, shouldContinue: false };
-		persist({ reason, stoppedAt: Date.now() });
+		decisionRecorded = true;
+		setControlEnabled(false);
+		if (persistTransition && wasActive) persist({ reason, stoppedAt: Date.now() });
 	}
 
-	function startLoop(prompt: string, max?: number): void {
+	function startLoop(prompt: string, max: number): void {
 		state = {
 			active: true,
 			prompt,
 			iteration: 0,
-			maxIterations: max && max > 0 ? Math.floor(max) : 100,
+			maxIterations: max,
 			shouldContinue: false,
 		};
+		decisionRecorded = false;
+		peakContextPercent = undefined;
+		setControlEnabled(true);
 		persist({ startedAt: Date.now() });
 	}
 
 	pi.registerTool({
-		name: "loop_control",
+		name: TOOL_NAME,
 		label: "Loop Control",
-		description: "Stop or continue an active prompt loop",
+		description: "Record the one final stop/continue decision for the active prompt-loop iteration",
 		parameters: Type.Object({
 			action: StringEnum(["stop", "continue"] as const),
 			reason: Type.Optional(Type.String()),
 		}),
-		promptSnippet: "Stop or continue the automated loop when appropriate",
+		promptSnippet: "Finish an active prompt-loop iteration with one stop/continue decision",
 		promptGuidelines: [
-			"When loop goals are satisfied, call loop_control with action=stop.",
-			"If more loop iterations are needed, call loop_control with action=continue.",
+			"When an active prompt-loop iteration is complete, call loop_control exactly once as your sole final tool call: stop if the objective is complete, otherwise continue.",
 		],
 		async execute(_toolCallId, params) {
+			if (!state.active || decisionRecorded) {
+				setControlEnabled(false);
+				return {
+					content: [{ type: "text", text: state.active ? "Loop decision already recorded." : "Loop is already inactive." }],
+					details: state,
+					terminate: true,
+				};
+			}
+
+			// Set before persistence so parallel tool calls cannot record two decisions.
+			decisionRecorded = true;
+			setControlEnabled(false);
 			if (params.action === "stop") {
 				stopLoop(params.reason || "Stopped by agent");
 				return {
 					content: [{ type: "text", text: `Loop stopped. ${params.reason || ""}`.trim() }],
 					details: state,
+					terminate: true,
 				};
 			}
-			if (!state.active) throw new Error("No loop is active");
+
 			state = { ...state, shouldContinue: true };
 			persist({ reason: params.reason || "Continuation requested" });
 			return {
-				content: [{ type: "text", text: "Loop marked to continue." }],
+				content: [{ type: "text", text: "Loop will continue after this run settles." }],
 				details: state,
+				terminate: true,
 			};
 		},
 	});
@@ -108,11 +146,19 @@ export default function loopExtension(pi: ExtensionAPI): void {
 			}
 
 			let body = match[1].trim();
-			let max = 100;
-			const maxMatch = body.match(/\s--max\s+(\d+)$/);
-			if (maxMatch) {
-				max = Number(maxMatch[1]);
-				body = body.slice(0, maxMatch.index).trim();
+			let max = DEFAULT_MAX_ITERATIONS;
+			if (/(?:^|\s)--max(?:\s|$)/.test(body)) {
+				const maxMatch = body.match(/^(.*?)\s*--max\s+(\d+)$/);
+				if (!maxMatch) {
+					ctx.ui.notify("Loop maximum must be a final integer from 1 to 100", "warning");
+					return;
+				}
+				body = maxMatch[1].trim();
+				max = Number(maxMatch[2]);
+				if (!Number.isSafeInteger(max) || max < 1 || max > MAX_ITERATIONS) {
+					ctx.ui.notify("Loop maximum must be an integer from 1 to 100", "warning");
+					return;
+				}
 			}
 			if (!body) {
 				ctx.ui.notify("Prompt cannot be empty", "warning");
@@ -122,11 +168,20 @@ export default function loopExtension(pi: ExtensionAPI): void {
 			startLoop(body, max);
 			ctx.ui.setStatus("loop", `loop ${state.iteration}/${state.maxIterations}`);
 			ctx.ui.notify(`Loop started (max ${state.maxIterations})`, "info");
-			pi.sendUserMessage(body);
+			try {
+				pi.sendUserMessage(body);
+			} catch (error) {
+				stopLoop("Failed to queue initial loop prompt");
+				ctx.ui.setStatus("loop", undefined);
+				ctx.ui.notify(`Loop stopped: could not queue initial prompt (${error instanceof Error ? error.message : String(error)})`, "warning");
+			}
 		},
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		state = defaultState();
+		decisionRecorded = false;
+		peakContextPercent = undefined;
 		const entries = ctx.sessionManager.getBranch();
 		for (let index = entries.length - 1; index >= 0; index -= 1) {
 			const entry = entries[index];
@@ -134,6 +189,9 @@ export default function loopExtension(pi: ExtensionAPI): void {
 			state = entry.data;
 			break;
 		}
+		decisionRecorded = state.shouldContinue;
+		if (state.active && state.shouldContinue) stopLoop("Interrupted after a continuation decision; restart explicitly");
+		else setControlEnabled(state.active);
 		ctx.ui.setStatus("loop", state.active ? `loop ${state.iteration}/${state.maxIterations}` : undefined);
 	});
 
@@ -142,23 +200,30 @@ export default function loopExtension(pi: ExtensionAPI): void {
 		return {
 			systemPrompt:
 				event.systemPrompt
-				+ "\n\nAn autonomous loop is active. At the end of each turn, decide whether to continue or stop by calling loop_control. If objective is complete, call loop_control with action=stop.",
+				+ "\n\nAn autonomous prompt loop is active. At the end of this run, call loop_control exactly once as your sole final tool call. Stop if the objective is complete; otherwise continue.",
 		};
 	});
 
 	pi.on("tool_result", async (event, ctx) => {
-		if (event.toolName !== "loop_control") return;
+		if (event.toolName !== TOOL_NAME) return;
 		ctx.ui.setStatus("loop", state.active ? `loop ${state.iteration}/${state.maxIterations}` : undefined);
+	});
+
+	pi.on("agent_end", async (_event, ctx) => {
+		if (!state.active) return;
+		const percent = ctx.getContextUsage()?.percent;
+		if (percent !== null && percent !== undefined) peakContextPercent = Math.max(peakContextPercent ?? 0, percent);
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
 		if (!state.active) return;
-		if (!state.shouldContinue) {
+		if (!decisionRecorded || !state.shouldContinue) {
 			stopLoop("Agent did not request continue");
 			ctx.ui.notify("Loop stopped: agent chose not to continue", "info");
 			ctx.ui.setStatus("loop", undefined);
 			return;
 		}
+
 		const nextIteration = state.iteration + 1;
 		if (nextIteration >= state.maxIterations) {
 			state = { ...state, iteration: nextIteration };
@@ -168,9 +233,30 @@ export default function loopExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
+		const settledPercent = ctx.getContextUsage()?.percent;
+		const contextPercent = settledPercent === null || settledPercent === undefined
+			? peakContextPercent
+			: Math.max(peakContextPercent ?? 0, settledPercent);
+		if (contextPercent !== undefined && contextPercent >= MAX_CONTEXT_PERCENT) {
+			state = { ...state, iteration: nextIteration };
+			stopLoop(`Context usage reached ${contextPercent.toFixed(1)}%`);
+			ctx.ui.notify(`Loop stopped: context usage is ${contextPercent.toFixed(1)}% (limit ${MAX_CONTEXT_PERCENT}%)`, "warning");
+			ctx.ui.setStatus("loop", undefined);
+			return;
+		}
+
 		state = { ...state, iteration: nextIteration, shouldContinue: false };
+		decisionRecorded = false;
+		peakContextPercent = undefined;
 		persist({ continuedAt: Date.now() });
 		ctx.ui.setStatus("loop", `loop ${state.iteration}/${state.maxIterations}`);
-		pi.sendUserMessage(state.prompt, { deliverAs: "followUp" });
+		try {
+			setControlEnabled(true);
+			pi.sendUserMessage(state.prompt, { deliverAs: "followUp" });
+		} catch (error) {
+			stopLoop("Failed to queue loop continuation");
+			ctx.ui.setStatus("loop", undefined);
+			ctx.ui.notify(`Loop stopped: could not queue continuation (${error instanceof Error ? error.message : String(error)})`, "warning");
+		}
 	});
 }
