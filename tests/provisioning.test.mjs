@@ -213,11 +213,15 @@ test('mosh agent helper bypasses ordinary hosts and preserves arguments', () => 
 test('mosh agent helper forwards workspace agents and stops its sidecar', () => {
   const harness = moshAgentHarness();
   const args = ['-p', '60001', 'user@workspace-dkirov', '--', 'tmux', 'new', '-s', 'dev'];
+  const remoteServer = '--server=PATH=/home/linuxbrew/.linuxbrew/bin:/opt/homebrew/bin:/usr/local/bin:$PATH mosh-server';
 
   const result = runMoshAgent(harness, args);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(readFileSync(harness.moshArgs, 'utf8').trim().split('\n'), args);
+  assert.deepEqual(
+    readFileSync(harness.moshArgs, 'utf8').trim().split('\n'),
+    [remoteServer, ...args],
+  );
   const sshArgs = readFileSync(harness.sshArgs, 'utf8');
   assert.match(sshArgs, /(^|\n)-A(\n|$)/);
   assert.match(sshArgs, /(^|\n)-T(\n|$)/);
@@ -226,6 +230,16 @@ test('mosh agent helper forwards workspace agents and stops its sidecar', () => 
   assert.match(sshArgs, /(^|\n)ServerAliveCountMax=3(\n|$)/);
   assert.match(sshArgs, /(^|\n)user@workspace-dkirov(\n|$)/);
   assert.equal(readFileSync(harness.sidecarStopped, 'utf8').trim(), 'stopped');
+});
+
+test('mosh agent helper preserves an explicit workspace server command', () => {
+  const harness = moshAgentHarness();
+  const args = ['--server', '/custom/mosh-server', 'workspace-dkirov'];
+
+  const result = runMoshAgent(harness, args);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readFileSync(harness.moshArgs, 'utf8').trim().split('\n'), args);
 });
 
 test('mosh agent helper preserves mosh failure status after cleanup', () => {

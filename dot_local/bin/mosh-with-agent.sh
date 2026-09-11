@@ -8,6 +8,7 @@ RETRY_INITIAL="${MOSH_AGENT_RETRY_INITIAL:-1}"
 RETRY_MAX="${MOSH_AGENT_RETRY_MAX:-15}"
 POLL_INTERVAL="${MOSH_AGENT_POLL_INTERVAL:-0.2}"
 READY_MARKER="__MOSH_AGENT_READY__"
+REMOTE_MOSH_SERVER="PATH=/home/linuxbrew/.linuxbrew/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH mosh-server"
 
 fail() {
   printf 'mosh: %s\n' "$*" >&2
@@ -73,6 +74,20 @@ fi
 [[ "$RETRY_MAX" =~ ^[0-9]+$ ]] || fail "MOSH_AGENT_RETRY_MAX must be a non-negative integer"
 ((RETRY_INITIAL <= RETRY_MAX)) || fail "MOSH_AGENT_RETRY_INITIAL must not exceed MOSH_AGENT_RETRY_MAX"
 [[ "$POLL_INTERVAL" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail "MOSH_AGENT_POLL_INTERVAL must be numeric"
+
+mosh_args=("$@")
+has_server_override=0
+for argument in "$@"; do
+  case "$argument" in
+    --server | --server=*)
+      has_server_override=1
+      break
+      ;;
+  esac
+done
+if ((has_server_override == 0)); then
+  mosh_args=("--server=$REMOTE_MOSH_SERVER" "${mosh_args[@]}")
+fi
 
 ready_file="$(mktemp "${TMPDIR:-/tmp}/mosh-agent-ready.XXXXXX")" || fail "could not create readiness file"
 diagnostic_file="$(mktemp "${TMPDIR:-/tmp}/mosh-agent-diagnostic.XXXXXX")" || {
@@ -228,7 +243,7 @@ if ! start_sidecar; then
   fail "SSH agent sidecar failed: $last_sidecar_reason"
 fi
 
-"$MOSH_BIN" "$@" &
+"$MOSH_BIN" "${mosh_args[@]}" &
 mosh_pid=$!
 retry_delay=$RETRY_INITIAL
 
