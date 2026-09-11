@@ -84,7 +84,10 @@ export async function handleMessages(args: string, ctx: ExtensionCommandContext,
         if (action === 'View body') await ask(ctx.ui.editor('Inspect message — edits discarded, never sent to the model', safeText(body?.text ?? '[Body unavailable: publication may not have completed. The queued reservation can be canceled.]')));
         else if (body) await compose(group, body.text);
       } else if (action === 'Cancel queued message' || action === 'Dismiss uncertain attempt') {
-        if (await ask(ctx.ui.confirm(action, 'This does not refund allowance or recall anything already admitted to Pi.'))) await b.resolveMessage(group, message.id, action.startsWith('Cancel') ? 'canceled' : 'dismissed');
+        const warning = action.startsWith('Cancel')
+          ? 'Canceling releases this queued reservation. It does not recall anything already admitted to Pi.'
+          : 'Dismissing unblocks the participants but does not refund the spent allowance or recall anything admitted to Pi.';
+        if (await ask(ctx.ui.confirm(action, warning))) await b.resolveMessage(group, message.id, action.startsWith('Cancel') ? 'canceled' : 'dismissed');
       }
     }
   } else if (command === 'prune') {

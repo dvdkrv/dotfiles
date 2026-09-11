@@ -4,6 +4,10 @@
 
 The user approved removing manual name entry, discovering peers, and self-selecting role-bearing names during normal work. Their final clarification supersedes the session-title fallback: **the Pi session ID is the default**. This is a focused messaging UX/tool enhancement, not automatic participation, task assignment, project tracking, or broker lifecycle work. Continue implementation/testing under the existing autonomous approval; do not merge or push.
 
+## Supersession note
+
+The approved [cache-stability and bounded-batching design](2026-09-11-pi-messaging-cache-and-batching-design.md) supersedes this document's ephemeral `context` hook and transient naming/identity guidance. Current identity is API-only: `peer_message peers` returns the joined participant's own routing ID, session ID, and display name together with active-peer metadata. Join, leave, heartbeat, and rename do not inject or reorder model messages. The session-ID default, self-only rename, immutable routing, and human-control decisions remain current.
+
 ## Identity
 
 - Join uses `ctx.sessionManager.getSessionId()` as both `sessionId` and initial `displayName`, without asking for a name. Keep the existing join confirmation, and show the default there.

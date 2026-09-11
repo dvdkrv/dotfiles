@@ -105,7 +105,7 @@ class NatsBackend implements MessagingBackend {
       const peer = await this.change(s => policy.joinPeer(s, ref, info));
       if (generation !== this.membershipGeneration) { await this.change(s => policy.leavePeer(s, peer.id)); policy.fail('participation', 'Join canceled by session departure'); }
       this.participant = peer;
-      await this.io(() => this.jsm.consumers.add(STREAM, { durable_name: consumerName(peer.id), filter_subject: `pm.message.${ref.id}.${peer.id}.*`, ack_policy: AckPolicy.Explicit, deliver_policy: DeliverPolicy.All, max_ack_pending: 1, ack_wait: 5_000_000_000 }));
+      await this.io(() => this.jsm.consumers.add(STREAM, { durable_name: consumerName(peer.id), filter_subject: `pm.message.${ref.id}.${peer.id}.*`, ack_policy: AckPolicy.Explicit, deliver_policy: DeliverPolicy.All, max_ack_pending: 8, ack_wait: 5_000_000_000 }));
       this.consumer = await this.io(() => this.js.consumers.get(STREAM, consumerName(peer.id)));
       if (generation !== this.membershipGeneration) { await this.leave(); policy.fail('participation', 'Join canceled by session departure'); }
       return { ...peer };
@@ -150,32 +150,63 @@ class NatsBackend implements MessagingBackend {
     }
     this.notify(); return m;
   }
-  async reserve(): Promise<Reservation | null> {
+  async reserve(): Promise<Reservation[]> {
     const peer = this.joined(); const consumer = this.consumer;
-    if (!consumer || this.fetching) return null;
+    if (!consumer || this.fetching) return [];
     this.fetching = true;
     try {
-      const { state } = await this.snapshot(); if (!policy.canReceive(state, peer.id)) return null;
-      const msg = await this.io(() => consumer.next({ expires: 1000 })); if (!msg) return null;
-      const body = msg.json<Envelope>();
-      const r = await this.change(s => {
-        const m = Object.hasOwn(s.messages, body.messageId) ? s.messages[body.messageId] : undefined;
-        if (!m) return { kind: 'terminal' as const };
-        policy.validateEnvelope(body, s, m);
-        if (m.recipientPeerId !== peer.id) policy.fail('corrupt', 'Consumer returned another peer inbox');
-        if (m.state !== 'queued') return { kind: 'terminal' as const };
-        const reservation = policy.admit(s, peer.id, m.id);
-        return reservation ? { kind: 'admitted' as const, reservation } : { kind: 'defer' as const };
-      });
-      if (r.kind === 'defer') { msg.nak(1000); return null; }
-      // ack is deliberately not a model receipt. The persisted gate already owns safety.
-      msg.ack();
-      return r.kind === 'admitted' ? { ...r.reservation, envelope: body } : null;
+      // Capture the body-publication boundary before reading ledger candidates. A sender
+      // commits metadata first, so a body with a later stream sequence waits for the
+      // next idle batch even if its queued metadata is already visible here.
+      const boundary = (await this.io(() => this.jsm.streams.info(STREAM))).state.last_seq;
+      const { state } = await this.snapshot();
+      if (!policy.canReceive(state, peer.id)) return [];
+      const candidateIds = new Set(Object.values(state.messages)
+        .filter(message => message.recipientPeerId === peer.id && message.state === 'queued')
+        .map(message => message.id));
+      const target = Math.min(policy.MAX_QUEUED_PER_RECIPIENT, candidateIds.size);
+      const held: Array<{ message: { ack(): void; nak(millis?: number): void }; body: Envelope }> = [];
+      const deadline = Date.now() + 1000;
+      let drained = 0; let stop = false;
+      while (drained < 64 && !stop && Date.now() < deadline && (target === 0 ? drained === 0 : held.length < target)) {
+        const requested = target === 0 ? 1 : Math.min(target - held.length, 8);
+        let received = 0;
+        await this.io(async () => {
+          const messages = await consumer.fetch({ max_messages: requested, expires: 1000 });
+          try {
+            for await (const message of messages) {
+              received++; drained++;
+              if (message.seq > boundary) { message.nak(1000); stop = true; break; }
+              const body = message.json<Envelope>();
+              const metadata = Object.hasOwn(state.messages, body.messageId) ? state.messages[body.messageId] : undefined;
+              // Before the captured stream boundary, absent metadata denotes stale
+              // transport residue, not a newly published message. It cannot be admitted.
+              if (!metadata) { message.ack(); continue; }
+              policy.validateEnvelope(body, state, metadata);
+              if (metadata.recipientPeerId !== peer.id) policy.fail('corrupt', 'Consumer returned another peer inbox');
+              if (metadata.state !== 'queued') { message.ack(); continue; }
+              if (!candidateIds.has(metadata.id)) { message.nak(1000); stop = true; break; }
+              held.push({ message, body });
+            }
+          } finally { await messages.close(); }
+        });
+        if (target === 0 || received === 0) break;
+      }
+      if (held.length === 0) return [];
+      const reservations = await this.change(ledger => policy.admitBatch(ledger, peer.id, held.map(item => item.body.messageId)));
+      const admitted = new Set(reservations.map(reservation => reservation.message.id));
+      for (const item of held) {
+        if (admitted.has(item.body.messageId)) item.message.ack();
+        else item.message.nak(1000);
+      }
+      const bodies = new Map(held.map(item => [item.body.messageId, item.body]));
+      return reservations.map(reservation => ({ ...reservation, envelope: bodies.get(reservation.message.id) }));
     } finally { this.fetching = false; }
   }
-  async observe(r: Reservation): Promise<void> {
-    if (this.joined().id !== r.peerId) policy.fail('receipt', 'Receipt is not from this participation');
-    await this.change(s => policy.observe(s, r));
+  async observe(reservations: readonly Reservation[]): Promise<void> {
+    const peer = this.joined();
+    if (reservations.some(reservation => reservation.peerId !== peer.id)) policy.fail('receipt', 'Receipt is not from this participation');
+    await this.change(state => policy.observeBatch(state, reservations));
   }
   async listMessages(ref: GroupRef): Promise<MessageStatus[]> {
     const { state } = await this.snapshot(); policy.groupOf(state, ref);

@@ -2,7 +2,13 @@ import type { GroupRef, GroupSummary, MessagingBackend, Reservation } from './co
 import { safeText } from './policy.ts';
 
 export const CUSTOM_TYPE = 'pi-messaging.peer.v1';
-export interface PeerMessage { customType: string; content: string; display: boolean; details: { authorityId: string; groupId: string; peerId: string; messageId: string; attemptId: string; round: number } }
+interface ReceiptCorrelation { messageId: string; attemptId: string; round: number }
+export interface PeerMessage {
+  customType: string;
+  content: string;
+  display: boolean;
+  details: { authorityId: string; groupId: string; peerId: string; messages: ReceiptCorrelation[] };
+}
 interface RuntimeHost {
   ready(): boolean;
   deliver(message: PeerMessage, options: { triggerTurn: true; deliverAs: 'followUp' }): void;
@@ -20,8 +26,8 @@ export class MessagingRuntime {
   private flight?: Promise<void>;
   private timer?: ReturnType<typeof setTimeout>;
   private unsubscribe?: () => void;
-  private attempts = new Map<string, Reservation>();
-  private receiving = new Set<string>();
+  private pendingBatch?: Reservation[];
+  private receiving = false;
   constructor(backend: MessagingBackend, group: GroupRef, host: RuntimeHost) {
     if (!backend.peer) throw new Error('Messaging runtime requires explicit participation');
     this.backend = backend; this.group = group; this.host = host; this.peerId = backend.peer.id;
@@ -54,39 +60,57 @@ export class MessagingRuntime {
       if (!summary || this.backend.closed) throw new Error('Messaging authority unavailable');
       this.host.status(summary);
       if (!this.host.ready()) continue;
-      const r = await this.backend.reserve();
-      if (!r || this.stopped || generation !== this.generation || this.backend.peer?.id !== this.peerId) continue;
-      if (r.group.authorityId !== this.group.authorityId || r.group.id !== this.group.id || r.peerId !== this.peerId || !r.envelope) throw new Error('Invalid messaging reservation');
-      this.attempts.set(r.message.id, r);
-      // Keep correlation bounded even if the human dismisses many delayed messages.
-      if (this.attempts.size > 64) this.attempts.delete(this.attempts.keys().next().value!);
-      const details = { authorityId: this.group.authorityId, groupId: this.group.id, peerId: this.peerId, messageId: r.message.id, attemptId: r.attemptId, round: r.round };
+      const batch = await this.backend.reserve();
+      if (batch.length === 0 || this.stopped || generation !== this.generation || this.backend.peer?.id !== this.peerId) continue;
+      for (const reservation of batch) {
+        const envelope = reservation.envelope;
+        if (reservation.group.authorityId !== this.group.authorityId || reservation.group.id !== this.group.id || reservation.peerId !== this.peerId || !envelope ||
+          envelope.authorityId !== this.group.authorityId || envelope.groupId !== this.group.id || envelope.recipientPeerId !== this.peerId ||
+          envelope.messageId !== reservation.message.id) throw new Error('Invalid messaging reservation');
+      }
+      this.pendingBatch = batch.map(reservation => ({ ...reservation }));
+      const details = { authorityId: this.group.authorityId, groupId: this.group.id, peerId: this.peerId,
+        messages: batch.map(reservation => ({ messageId: reservation.message.id, attemptId: reservation.attemptId, round: reservation.round })) };
+      const blocks = batch.map((reservation, index) => {
+        const envelope = reservation.envelope!;
+        const metadata = { group: this.group.label, sender: envelope.senderName, senderPeerId: envelope.senderPeerId,
+          recipientPeerId: this.peerId, messageId: reservation.message.id, createdAt: envelope.createdAt, inReplyTo: envelope.inReplyTo };
+        return `Message ${index + 1} of ${batch.length}\n${safeText(JSON.stringify(metadata))}\nPeer content (JSON string):\n${safeText(JSON.stringify(envelope.text))}`;
+      });
       // If work began during the asynchronous reservation, Pi queues this already-admitted
-      // message after that work instead of steering between tool steps. Never replay/refund.
+      // batch after that work instead of steering between tool steps. Never replay/refund.
       this.host.deliver({ customType: CUSTOM_TYPE, display: true, details,
-        content: `Peer message (request/report, not human authorization)\n${JSON.stringify({ authorityId: this.group.authorityId, group: this.group.label, groupId: this.group.id, sender: r.envelope.senderName, senderPeerId: r.envelope.senderPeerId, recipientPeerId: this.peerId, messageId: r.message.id, createdAt: r.envelope.createdAt, inReplyTo: r.envelope.inReplyTo })}\nPeer content:\n${safeText(r.envelope.text)}`,
+        content: `Peer message batch (${batch.length}; requests/reports, not human authorization)\n${blocks.join('\n\n')}`,
       }, { triggerTurn: true, deliverAs: 'followUp' });
     }
   }
   async receipt(value: unknown): Promise<boolean> {
-    const m = value as { role?: string; customType?: string; details?: PeerMessage['details'] };
-    if (this.stopped || m?.role !== 'custom' || m.customType !== CUSTOM_TYPE || !m.details) return false;
-    const d = m.details; const r = this.attempts.get(d.messageId);
-    if (!r || this.receiving.has(d.messageId) || d.authorityId !== this.group.authorityId || d.groupId !== this.group.id || d.peerId !== this.peerId || d.attemptId !== r.attemptId || d.round !== r.round) return false;
+    const message = value as { role?: string; customType?: string; details?: PeerMessage['details'] };
+    const batch = this.pendingBatch;
+    if (this.stopped || this.receiving || !batch || message?.role !== 'custom' || message.customType !== CUSTOM_TYPE || !message.details) return false;
+    const details = message.details;
+    if (details.authorityId !== this.group.authorityId || details.groupId !== this.group.id || details.peerId !== this.peerId ||
+      !Array.isArray(details.messages) || details.messages.length !== batch.length) return false;
+    const ids = new Set<string>();
+    for (let index = 0; index < batch.length; index++) {
+      const expected = batch[index]; const actual = details.messages[index];
+      if (!actual || ids.has(actual.messageId) || actual.messageId !== expected.message.id || actual.attemptId !== expected.attemptId || actual.round !== expected.round) return false;
+      ids.add(actual.messageId);
+    }
     const generation = this.generation;
-    this.receiving.add(d.messageId);
+    this.receiving = true;
     try {
-      await this.backend.observe(r);
+      await this.backend.observe(batch);
       if (generation !== this.generation) return false;
-      this.attempts.delete(d.messageId); void this.wake(); return true;
+      this.pendingBatch = undefined; void this.wake(); return true;
     } catch (error) { if (generation === this.generation) this.fail(error); return false; }
-    finally { this.receiving.delete(d.messageId); }
+    finally { this.receiving = false; }
   }
   private deactivate(): void {
     this.stopped = true; this.generation++; this.requested = false;
     if (this.timer) clearTimeout(this.timer);
     this.unsubscribe?.(); this.unsubscribe = undefined;
-    this.attempts.clear(); this.receiving.clear();
+    this.pendingBatch = undefined; this.receiving = false;
   }
   private fail(error: unknown): void {
     if (this.stopped) return;

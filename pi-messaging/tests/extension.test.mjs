@@ -4,7 +4,7 @@ import { createJiti } from 'jiti';
 const jiti = createJiti(import.meta.url);
 const { registerMessaging } = await jiti.import('../extensions/messaging.ts');
 const p = await jiti.import('../src/policy.ts');
-const { NAMING_GUIDANCE, QUIET_GUIDANCE } = await jiti.import('../src/identity.ts');
+const { QUIET_GUIDANCE } = await jiti.import('../src/identity.ts');
 import { randomUUID } from 'node:crypto';
 import { CombinedAutocompleteProvider } from '@earendil-works/pi-tui';
 import { createRequire } from 'node:module';
@@ -28,7 +28,7 @@ function fixture(t) {
     getGroupSummary: async g => p.summary(state, g), peers: async g => Object.values(state.peers).filter(x => x.groupId === g.id),
     join: async (g, info) => { peer = p.joinPeer(state, g, info); return peer; },
     leave: async () => { if (peer) p.leavePeer(state, peer.id); peer = undefined; }, close: async () => { closed = true; },
-    heartbeat: async name => { if (peer) p.heartbeat(state, peer.id, name); }, onChange: () => () => {}, reserve: async () => null,
+    heartbeat: async name => { if (peer) p.heartbeat(state, peer.id, name); }, onChange: () => () => {}, reserve: async () => [],
     arm: async (g, limit) => p.arm(state, g, limit), pause: async g => p.pause(state, g),
     send: async (input, key) => { const m = p.prepareMessage(state, peer.id, input, key); bodies.set(m.id, input.text); return m; },
     listMessages: async g => Object.values(state.messages).filter(m => m.groupId === g.id).sort((a, b) => b.sequence - a.sequence),
@@ -171,7 +171,7 @@ test('peer selection shows role and session ID without conflating identical labe
   const sessionId = 'f82e409a-1111-4444-8888-123456789abc';
   f.other.displayName = 'test-reviewer'; f.other.sessionId = sessionId;
   const second = p.joinPeer(f.state, f.group, { sessionId, displayName: 'test-reviewer' });
-  await f.commands.get('messages').handler('join review', f.ctx);
+  await f.commands.get('messages').handler('join review', f.ctx); p.arm(f.state, f.group, 1);
   f.ctx.ui.select = async (title, choices) => {
     assert.equal(title, 'Send to peer'); assert.equal(choices.length, 2);
     assert.ok(choices.every(c => c.includes('test-reviewer') && c.includes('f82e409a')));
@@ -182,7 +182,7 @@ test('peer selection shows role and session ID without conflating identical labe
 });
 
 test('role rename changes only self while discovery retains session and routing IDs', async t => {
-  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx); p.arm(f.state, f.group, 1);
   const before = { ...f.backend.peer }; const groupBefore = { ...f.state.groups[f.group.id] };
   const queued = p.prepareMessage(f.state, f.other.id, { toPeerId: before.id, text: 'PRIVATE_BODY' }, 'incoming');
   const result = JSON.parse((await execute(f, 'rename', { displayName: '  test-reviewer  ' })).content[0].text);
@@ -223,7 +223,7 @@ test('rename rejects administrative targets, invalid names, and unjoined or non-
 });
 
 test('real Pi argument pipeline accepts captured-style padding without changing input or sending extra work', async t => {
-  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx); p.arm(f.state, f.group, 2);
   const tool = f.tools.get('peer_message');
   const calls = [
     { action: 'peers', displayName: 'test-crawler', toPeerId: '', text: '', inReplyTo: '', beforeSequence: 1 },
@@ -240,6 +240,10 @@ test('real Pi argument pipeline accepts captured-style padding without changing 
       tools: [wrapToolDefinition(tool, () => f.ctx)] },
     streamFn: () => {
       assert.ok(requests <= calls.length, 'Scripted provider must stay bounded');
+      if (requests === 3) {
+        const first = Object.values(f.state.messages)[0];
+        p.resolveMessage(f.state, f.group, first.id, 'canceled');
+      }
       const args = calls[requests++];
       const message = { role: 'assistant', api: 'openai-responses', provider: 'test', model: 'scripted', timestamp: 1,
         content: args ? [{ type: 'toolCall', id: `call-${requests}`, name: 'peer_message', arguments: args }] : [{ type: 'text', text: 'done' }],
@@ -262,11 +266,12 @@ test('real Pi argument pipeline accepts captured-style padding without changing 
 });
 
 test('direct execution normalizes neutral padding but preserves real reply references and status cursors', async t => {
-  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx); p.arm(f.state, f.group, 2);
   for (const empty of ['', null, undefined]) {
     await execute(f, 'rename', { displayName: 'test-reviewer', toPeerId: empty, text: empty, inReplyTo: empty, beforeSequence: 1 });
   }
   const first = JSON.parse((await execute(f, 'send', { toPeerId: f.other.id, text: 'one', inReplyTo: '' })).content[0].text);
+  p.resolveMessage(f.state, f.group, first.id, 'canceled');
   await execute(f, 'send', { toPeerId: f.other.id, text: 'reply', inReplyTo: first.id });
   assert.equal(Object.values(f.state.messages)[1].inReplyTo, first.id);
   const tool = f.tools.get('peer_message'); assert.equal(typeof tool.prepareArguments, 'function');
@@ -331,47 +336,35 @@ test('late rename acknowledgment cannot follow replacement membership or block i
   assert.notEqual(f.backend.peer.id, oldId); assert.equal(f.backend.peer.displayName, 'new-reviewer');
 });
 
-test('identity guidance is transient, current, and inert outside explicit enabled participation', async t => {
-  const f = fixture(t); const context = f.events.get('context'); assert.equal(typeof context, 'function');
-  const original = [{ role: 'user', content: 'Review the tests', timestamp: 1 }];
-  assert.deepEqual(context({ messages: original }, f.ctx).messages, original);
-  assert.equal(f.connectCalls.length, 0);
+test('messaging exposes identity only through the API and registers no context hook', async t => {
+  const f = fixture(t);
+  assert.equal(f.events.has('context'), false);
   await f.commands.get('messages').handler('join review', f.ctx);
-  f.backend.peers = async () => { throw Error('Context must not poll the broker'); };
-  f.backend.readBody = async () => { throw Error('Context must not read pending bodies'); };
-  p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'PRIVATE_BODY' }, 'pending');
-  const state = structuredClone(f.state);
-  const supplied = context({ messages: original }, f.ctx);
-  assert.equal(supplied.messages.length, 2); assert.equal(original.length, 1);
-  const identity = supplied.messages[1];
-  assert.equal(identity.role, 'custom'); assert.equal(identity.customType, 'pi-messaging.identity.v1'); assert.equal(identity.display, false);
-  assert.deepEqual(identity.details, { group: f.group, id: f.backend.peer.id, sessionId: 'local', displayName: 'local' });
-  assert.equal(JSON.stringify(supplied).includes('PRIVATE_BODY'), false);
-  assert.deepEqual(f.state, state); assert.equal(f.delivered.length, 0);
-  await execute(f, 'rename', { displayName: 'test-reviewer' });
-  const refreshed = context({ messages: supplied.messages }, f.ctx);
-  assert.equal(refreshed.messages.length, 2); assert.equal(refreshed.messages[1].details.displayName, 'test-reviewer');
-  f.activeTools.length = 0;
-  assert.deepEqual(context({ messages: refreshed.messages }, f.ctx).messages, original);
-  f.activeTools.push('peer_message');
-  for (const mode of ['rpc', 'json', 'print']) assert.deepEqual(context({ messages: refreshed.messages }, { ...f.ctx, mode }).messages, original);
-  await f.commands.get('messages').handler('leave', f.ctx);
-  assert.deepEqual(context({ messages: refreshed.messages }, f.ctx).messages, original);
-  await f.commands.get('messages').handler('join review', f.ctx); await f.backend.close();
-  assert.deepEqual(context({ messages: refreshed.messages }, f.ctx).messages, original);
+  const result = await execute(f, 'peers');
+  const value = JSON.parse(result.content[0].text);
+  assert.deepEqual(
+    { id: value.selfId, sessionId: value.selfSessionId, displayName: value.selfDisplayName },
+    { id: f.backend.peer.id, sessionId: 'local', displayName: 'local' },
+  );
+  assert.equal(f.delivered.some(([message]) => message.customType === 'pi-messaging.identity.v1'), false);
+  const tool = f.tools.get('peer_message');
+  const metadata = JSON.stringify({ description: tool.description, promptSnippet: tool.promptSnippet, promptGuidelines: tool.promptGuidelines });
+  for (const runtimeValue of [f.group.id, f.backend.peer.id, f.backend.peer.sessionId, String(f.backend.peer.lastSeen)]) {
+    assert.equal(metadata.includes(runtimeValue), false);
+  }
 });
 
 test('busy work cannot enable admission; settling idle admits one queued message', { timeout: 2000 }, async t => {
   const f = fixture(t); let reserves = 0; let statusSeen;
   const status = new Promise(resolve => { statusSeen = resolve; });
   f.ctx.ui.setStatus = () => statusSeen(); f.ctx.isIdle = () => false;
-  f.backend.reserve = async () => { reserves++; return null; };
+  f.backend.reserve = async () => { reserves++; return []; };
   await f.events.get('agent_start')({}, f.ctx);
   await f.commands.get('messages').handler('join review', f.ctx); await status;
   assert.equal(reserves, 0); assert.equal(f.delivered.length, 0);
-  const message = p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'quiet message' }, 'quiet');
   p.arm(f.state, f.group, 1);
-  f.backend.reserve = async () => { const r = p.admit(f.state, f.backend.peer.id, message.id); return r ? { ...r, envelope: p.envelope(f.state, message, 'quiet message') } : null; };
+  const message = p.prepareMessage(f.state, f.other.id, { toPeerId: f.backend.peer.id, text: 'quiet message' }, 'quiet');
+  f.backend.reserve = async () => { const reservation = p.admit(f.state, f.backend.peer.id, message.id); return reservation ? [{ ...reservation, envelope: p.envelope(f.state, message, 'quiet message') }] : []; };
   let delivered; const delivery = new Promise(resolve => { delivered = resolve; });
   f.pi.sendMessage = (...args) => { f.delivered.push(args); delivered(); };
   f.ctx.isIdle = () => true; await f.events.get('agent_settled')({}, f.ctx); await delivery;
@@ -379,30 +372,15 @@ test('busy work cannot enable admission; settling idle admits one queued message
   assert.equal(f.state.groups[f.group.id].used, 1);
 });
 
-test('onboarding permits a bounded discovery/name sequence and never resets on another agent run', async t => {
-  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
-  const context = f.events.get('context'); f.activeTools.length = 0;
-  assert.equal(context({ messages: [] }, f.ctx).messages.length, 0);
-  f.activeTools.push('peer_message');
-  const first = context({ messages: [] }, f.ctx).messages[0]; assert.ok(first.content.includes(NAMING_GUIDANCE));
-  assert.ok(first.content.includes(QUIET_GUIDANCE));
-  const second = context({ messages: [first] }, f.ctx).messages[0];
-  assert.ok(second.content.includes(NAMING_GUIDANCE)); assert.equal(second.content.includes(QUIET_GUIDANCE), false);
-  const third = context({ messages: [second] }, f.ctx).messages[0];
-  assert.equal(third.content.includes(NAMING_GUIDANCE), false); assert.ok(third.content.length < first.content.length / 2);
-  assert.deepEqual(third.details, first.details);
-  await f.events.get('agent_start')({}, f.ctx);
-  assert.equal(context({ messages: [] }, f.ctx).messages[0].content.includes(NAMING_GUIDANCE), false);
-  await execute(f, 'rename', { displayName: 'test-reviewer' });
-  assert.equal(context({ messages: [] }, f.ctx).messages[0].details.displayName, 'test-reviewer');
-  await f.commands.get('messages').handler('leave', f.ctx); await f.commands.get('messages').handler('join review', f.ctx);
-  assert.ok(context({ messages: [] }, f.ctx).messages[0].content.includes(NAMING_GUIDANCE));
-  await execute(f, 'rename', { displayName: 'test-reviewer' });
-  assert.equal(context({ messages: [] }, f.ctx).messages[0].content.includes(NAMING_GUIDANCE), false, 'Successful naming ends reminders immediately');
+test('stationary tool guidance directs agents to the API without dynamic identity values', t => {
+  const f = fixture(t); const tool = f.tools.get('peer_message');
+  assert.ok(tool.promptGuidelines.includes(QUIET_GUIDANCE));
+  assert.match(tool.promptGuidelines.join('\n'), /action peers/i);
+  assert.match(tool.promptGuidelines.join('\n'), /conversation context/i);
 });
 
 test('human composition queues as the joined peer and inbox viewing/cancellation never enters model context', async t => {
-  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx);
+  const f = fixture(t); await f.commands.get('messages').handler('join review', f.ctx); p.arm(f.state, f.group, 1);
   await f.commands.get('messages').handler('send', f.ctx);
   const m = Object.values(f.state.messages)[0]; assert.equal(m.senderPeerId, f.backend.peer.id);
   const choices = ['message', 'View body', 'message', 'Cancel queued message', 'Close'];
@@ -411,6 +389,7 @@ test('human composition queues as the joined peer and inbox viewing/cancellation
   f.ctx.ui.editor = async (_title, text) => { assert.equal(text, 'human text'); views++; return 'must not be sent'; };
   await f.commands.get('messages').handler('inbox', f.ctx);
   assert.equal(views, 1); assert.equal(m.state, 'canceled'); assert.equal(f.delivered.length, 0);
+  assert.match(f.confirmations.at(-1)[1], /releases this queued reservation/i);
   assert.equal(Object.keys(f.state.messages).length, 1);
 });
 
@@ -423,6 +402,7 @@ test('human dismissal, revocation and pruning preserve spent allowance', async t
   f.ctx.ui.select = async (_title, options) => { const choice = choices.shift(); return choice === 'message' ? options[0] : choice; };
   await f.commands.get('messages').handler('inbox', f.ctx);
   assert.equal(m.state, 'dismissed');
+  assert.match(f.confirmations.at(-1)[1], /does not refund the spent allowance/i);
   f.ctx.ui.select = async (_title, options) => options[0];
   await f.commands.get('messages').handler('revoke', f.ctx);
   assert.equal(f.state.peers[f.other.id].active, false);

@@ -36,7 +36,7 @@ Excluded:
 - changes to Pi messaging;
 - package activation, Pi reload, or modification of the SAP session/pane.
 
-The messaging extension does not call `setActiveTools()`. Its static tool metadata is cacheable while the active set remains unchanged. Its transient identity and onboarding context is appended at the conversation tail and is therefore a separate concern, not the loop's repeated prefix invalidation.
+The messaging extension does not call `setActiveTools()`. Its static tool metadata is cacheable while the active set remains unchanged. The later [messaging cache-stability design](2026-09-11-pi-messaging-cache-and-batching-design.md) removed messaging's transient identity/onboarding context entirely after proving that its tail replacement independently invalidated continuation prefixes.
 
 ## Design
 
