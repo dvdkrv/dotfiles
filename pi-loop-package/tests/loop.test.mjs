@@ -147,6 +147,14 @@ test('max parsing rejects zero, overflow, and malformed suffixes without mutatio
   }
 });
 
+test('initial enqueue failure stops rather than retaining active state', async () => {
+  const f = setup({ failMessageAt: 1 }); const c = context();
+  await f.commands.get('loop')('start queue initial safely --max 3', c.ctx);
+  assert.equal(f.messages.length, 0); assert.equal(f.entries.at(-1).data.active, false);
+  assert.match(f.entries.at(-1).data.reason, /initial/i); assert.equal(f.activeTools().includes('loop_control'), false);
+  assert.ok(c.notifications.some(item => item.level === 'warning' && /initial/i.test(item.message)));
+});
+
 test('follow-up enqueue failure stops rather than retaining active state', async () => {
   const f = setup({ failMessageAt: 2 }); const c = context();
   await f.commands.get('loop')('start queue safely --max 3', c.ctx);
