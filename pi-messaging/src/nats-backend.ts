@@ -1,5 +1,5 @@
 import { connect, type NatsConnection, type Subscription } from '@nats-io/transport-node';
-import { AckPolicy, DeliverPolicy, DiscardPolicy, RetentionPolicy, StorageType, JetStreamApiError, jetstream, jetstreamManager, type Consumer, type JetStreamClient, type JetStreamManager } from '@nats-io/jetstream';
+import { AckPolicy, DeliverPolicy, DiscardPolicy, ReplayPolicy, RetentionPolicy, StorageType, JetStreamApiError, jetstream, jetstreamManager, type Consumer, type JetStreamClient, type JetStreamManager } from '@nats-io/jetstream';
 import { Kvm, type KV } from '@nats-io/kv';
 import { setTimeout as delay } from 'node:timers/promises';
 import { MessagingError, type BrokerConfig, type Envelope, type GroupRef, type GroupSummary, type MessagingBackend, type MessageStatus, type ParticipantLease, type Peer, type Reservation, type SendInput } from './contracts.ts';
@@ -133,16 +133,40 @@ class NatsBackend implements MessagingBackend {
     const { state } = await this.snapshot(); policy.groupOf(state, ref);
     return Object.values(state.peers).filter(peer => peer.groupId === ref.id).map(policy.publicPeer);
   }
-  private async bindConsumer(peerId: string, groupId: string): Promise<Consumer> {
+  private async bindConsumer(peerId: string, groupId: string): Promise<{ consumer: Consumer; created: boolean }> {
     const name = consumerName(peerId);
-    const expected = { durable_name: name, filter_subject: `pm.message.${groupId}.${peerId}.*`, ack_policy: AckPolicy.Explicit, deliver_policy: DeliverPolicy.All, max_ack_pending: 8, ack_wait: 5_000_000_000 };
+    const expected = {
+      durable_name: name, filter_subject: `pm.message.${groupId}.${peerId}.*`, ack_policy: AckPolicy.Explicit,
+      deliver_policy: DeliverPolicy.All, replay_policy: ReplayPolicy.Instant, max_ack_pending: 8,
+      ack_wait: 5_000_000_000, max_deliver: -1, max_waiting: 512, num_replicas: 0,
+    };
+    let created = false;
     const info = await this.io(async () => {
       try { return await this.jsm.consumers.info(STREAM, name); }
-      catch (error) { if (!apiCode(error, 10014)) throw error; return this.jsm.consumers.add(STREAM, expected); }
+      catch (error) {
+        if (!apiCode(error, 10014)) throw error;
+        const added = await this.jsm.consumers.add(STREAM, expected); created = true; return added;
+      }
     });
     const config = info.config;
-    if (info.stream_name !== STREAM || config.durable_name !== expected.durable_name || config.filter_subject !== expected.filter_subject || config.ack_policy !== expected.ack_policy || config.deliver_policy !== expected.deliver_policy || config.max_ack_pending !== expected.max_ack_pending || config.ack_wait !== expected.ack_wait) policy.fail('configuration', 'Unsafe or incompatible peer consumer configuration');
-    return this.io(() => this.js.consumers.get(STREAM, name));
+    const hasUnexpectedBehavior = config.deliver_subject !== undefined || config.deliver_group !== undefined
+      || config.flow_control === true || (config.idle_heartbeat ?? 0) !== 0 || config.headers_only === true
+      || (config.inactive_threshold ?? 0) !== 0 || (config.backoff?.length ?? 0) !== 0
+      || config.pause_until !== undefined || info.paused === true || (config.opt_start_seq ?? 0) !== 0
+      || config.opt_start_time !== undefined || (config.rate_limit_bps ?? 0) !== 0
+      || (config.max_batch ?? 0) !== 0 || (config.max_expires ?? 0) !== 0 || (config.max_bytes ?? 0) !== 0
+      || config.mem_storage === true || (config.filter_subjects?.length ?? 0) !== 0
+      || config.priority_policy !== undefined || (config.priority_groups?.length ?? 0) !== 0
+      || (config.priority_timeout ?? 0) !== 0;
+    if (info.stream_name !== STREAM || config.name !== name || config.durable_name !== expected.durable_name
+      || config.filter_subject !== expected.filter_subject || config.ack_policy !== expected.ack_policy
+      || config.deliver_policy !== expected.deliver_policy || config.replay_policy !== expected.replay_policy
+      || config.max_ack_pending !== expected.max_ack_pending || config.ack_wait !== expected.ack_wait
+      || config.max_deliver !== expected.max_deliver || config.max_waiting !== expected.max_waiting
+      || config.num_replicas !== expected.num_replicas || hasUnexpectedBehavior) {
+      policy.fail('configuration', 'Unsafe or incompatible peer consumer configuration');
+    }
+    return { consumer: await this.io(() => this.js.consumers.get(STREAM, name)), created };
   }
   async join(ref: GroupRef, info: { sessionId: string; displayName: string }): Promise<Peer> {
     if (this.participant || this.joining) policy.fail('participation', 'Leave the current group before joining');
@@ -158,13 +182,20 @@ class NatsBackend implements MessagingBackend {
         await this.deleteConsumer(consumerName(participation.peer.id));
         policy.fail('participation', 'Join canceled by session departure');
       }
-      const consumer = await this.bindConsumer(participation.peer.id, ref.id);
+      let binding: { consumer: Consumer; created: boolean };
+      try { binding = await this.bindConsumer(participation.peer.id, ref.id); }
+      catch (error) {
+        if (!this.closed && error instanceof MessagingError && error.code !== 'uncertain') {
+          await this.change(s => policy.leavePeer(s, participation.lease));
+        }
+        throw error;
+      }
       if (generation !== this.membershipGeneration) {
         await this.change(s => policy.leavePeer(s, participation.lease));
         await this.deleteConsumer(consumerName(participation.peer.id));
         policy.fail('participation', 'Join canceled by session departure');
       }
-      this.participant = participation; this.consumer = consumer;
+      this.participant = participation; this.consumer = binding.consumer;
       return { ...participation.peer };
     } finally { this.joining = false; settle(); if (this.membershipDone === done) this.membershipDone = undefined; }
   }
@@ -175,15 +206,26 @@ class NatsBackend implements MessagingBackend {
     const done = new Promise<void>(resolve => { settle = resolve; }); this.membershipDone = done;
     const generation = ++this.membershipGeneration;
     try {
-      const consumer = await this.bindConsumer(peerId, ref.id);
+      const preflight = (await this.snapshot()).state;
+      policy.resumePeer(structuredClone(preflight), ref, sessionId, peerId);
+      const binding = await this.bindConsumer(peerId, ref.id);
       if (generation !== this.membershipGeneration) policy.fail('participation', 'Resume canceled by session departure');
-      const stored = await this.change(state => policy.resumePeer(state, ref, sessionId, peerId));
+      let stored: ReturnType<typeof policy.resumePeer>;
+      try { stored = await this.change(state => policy.resumePeer(state, ref, sessionId, peerId)); }
+      catch (error) {
+        if (binding.created && !this.closed && error instanceof MessagingError && error.code !== 'uncertain') {
+          const current = (await this.snapshot()).state;
+          const peer = Object.hasOwn(current.peers, peerId) ? current.peers[peerId] : undefined;
+          if (!peer || !peer.active || peer.groupId !== ref.id) await this.deleteConsumer(consumerName(peerId));
+        }
+        throw error;
+      }
       const participation = { peer: policy.publicPeer(stored), lease: policy.leaseOf(stored) };
       if (generation !== this.membershipGeneration) {
         await this.change(state => policy.suspendPeer(state, participation.lease));
         policy.fail('participation', 'Resume canceled by session departure');
       }
-      this.participant = participation; this.consumer = consumer;
+      this.participant = participation; this.consumer = binding.consumer;
       return { ...participation.peer };
     } finally { this.joining = false; settle(); if (this.membershipDone === done) this.membershipDone = undefined; }
   }
@@ -209,8 +251,11 @@ class NatsBackend implements MessagingBackend {
   private joined(): { peer: Peer; lease: ParticipantLease } { if (!this.participant) policy.fail('participation', 'Explicitly join a messaging group first'); return this.participant; }
   async heartbeat(displayName?: string): Promise<void> {
     const participation = this.joined();
-    await this.change(state => policy.heartbeat(state, participation.lease, displayName));
-    if (displayName !== undefined) participation.peer.displayName = displayName;
+    const peer = await this.change(state => {
+      policy.heartbeat(state, participation.lease, displayName);
+      return policy.publicPeer(policy.requireLease(state, participation.lease));
+    });
+    participation.peer = peer;
   }
   async arm(ref: GroupRef, limit: number): Promise<void> { await this.change(s => policy.arm(s, ref, limit)); }
   async pause(ref: GroupRef): Promise<void> { await this.change(s => policy.pause(s, ref)); }

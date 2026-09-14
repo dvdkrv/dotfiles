@@ -8,6 +8,7 @@ import { connect } from '@nats-io/transport-node';
 import { Kvm } from '@nats-io/kv';
 import { brokerFixture } from './helpers/broker.mjs';
 const { connectBackend } = await createJiti(import.meta.url).import('../src/nats-backend.ts');
+const { MessagingError } = await createJiti(import.meta.url).import('../src/contracts.ts');
 const consumerName = peerId => `peer_${peerId.replaceAll('-', '')}`;
 async function fixture(t) {
   const f = await brokerFixture(t); if (!f) return null;
@@ -102,6 +103,76 @@ test('resumes a preserved durable inbox as one ordered three-message batch', asy
   assert.equal((await replacement.getGroupSummary(f.g)).used, 3);
   await replacement.observe(batch);
   assert.ok((await replacement.listMessages(f.g)).every(message => message.state === 'observed'));
+});
+
+test('rejected resume of a left peer does not recreate its durable', async t => {
+  const f = await fixture(t); if (!f) return;
+  const departed = f.b.peer; const name = consumerName(departed.id);
+  await f.b.leave();
+  const before = (await f.a.jsm.streams.info('PM_MESSAGES')).state.consumer_count;
+  await assert.rejects(f.a.jsm.consumers.info('PM_MESSAGES', name));
+
+  const replacement = await connectBackend(f.config); t.after(() => replacement.close());
+  await assert.rejects(replacement.resume(f.g, departed.id, departed.sessionId), /left|revoked|participation/i);
+  assert.equal((await f.a.jsm.streams.info('PM_MESSAGES')).state.consumer_count, before);
+  await assert.rejects(f.a.jsm.consumers.info('PM_MESSAGES', name));
+});
+
+test('resume CAS rejection after creating a durable removes the now-inactive orphan', async t => {
+  const f = await fixture(t); if (!f) return;
+  const original = f.b.peer; const name = consumerName(original.id);
+  await f.b.suspend(); await f.b.close();
+  await f.a.jsm.consumers.delete('PM_MESSAGES', name);
+  const before = (await f.a.jsm.streams.info('PM_MESSAGES')).state.consumer_count;
+  const nc = await connect({ servers: f.config.server, token: f.config.token }); t.after(() => nc.close());
+  const kv = await new Kvm(nc).open('PM_CONTROL');
+  const replacement = await connectBackend(f.config); t.after(() => replacement.close());
+  const bind = replacement.bindConsumer.bind(replacement);
+  replacement.bindConsumer = async (...args) => {
+    const binding = await bind(...args);
+    const entry = await kv.get('state'); const state = entry.json();
+    state.peers[original.id].active = false; state.peers[original.id].suspended = false;
+    state.peers[original.id].leaseId = randomUUID();
+    await kv.update('state', JSON.stringify(state), entry.revision);
+    return binding;
+  };
+
+  await assert.rejects(replacement.resume(f.g, original.id, original.sessionId), /left|revoked|participation/i);
+  assert.equal((await f.a.jsm.streams.info('PM_MESSAGES')).state.consumer_count, before);
+  await assert.rejects(f.a.jsm.consumers.info('PM_MESSAGES', name));
+});
+
+test('definite consumer bind rejection finalizes a fresh joined identity', async t => {
+  const f = await fixture(t); if (!f) return;
+  const joining = await connectBackend(f.config); t.after(() => joining.close());
+  const beforeActive = (await f.a.peers(f.g)).filter(peer => peer.active).length;
+  joining.bindConsumer = async () => { throw new MessagingError('configuration', 'forced definite bind rejection'); };
+
+  await assert.rejects(joining.join(f.g, { sessionId: 'failed-join', displayName: 'Failed Join' }), /forced definite bind rejection/);
+  assert.equal(joining.peer, undefined);
+  const peers = await f.a.peers(f.g);
+  assert.equal(peers.filter(peer => peer.active).length, beforeActive);
+  assert.equal(peers.find(peer => peer.sessionId === 'failed-join')?.active, false);
+});
+
+test('resume rejects behavior-changing preserved consumer configuration', async t => {
+  const f = await fixture(t); if (!f) return;
+  const original = f.b.peer; const name = consumerName(original.id);
+  await f.b.suspend(); await f.b.close();
+  await f.a.jsm.consumers.update('PM_MESSAGES', name, { max_deliver: 1 });
+
+  const replacement = await connectBackend(f.config); t.after(() => replacement.close());
+  await assert.rejects(replacement.resume(f.g, original.id, original.sessionId), /consumer configuration/i);
+  const current = (await f.a.peers(f.g)).find(peer => peer.id === original.id);
+  assert.equal(current.suspended, true);
+});
+
+test('heartbeat keeps the cached public peer identical to committed normalized state', async t => {
+  const f = await fixture(t); if (!f) return;
+  await f.a.heartbeat('  Alice Updated  ');
+  const stored = (await f.b.peers(f.g)).find(peer => peer.id === f.a.peer.id);
+  assert.deepEqual(f.a.peer, stored);
+  assert.equal(f.a.peer.displayName, 'Alice Updated');
 });
 
 test('attempted message and allowance survive suspend and resume until explicit dismissal', async t => {
