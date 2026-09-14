@@ -1,20 +1,12 @@
 # Pi messaging
 
-Locally owned messaging between independent Pi sessions. One human command, one agent tool, and one explicitly started NATS broker. No agent spawning, transcript sharing, project manager, or third-party agent framework.
+Locally owned messaging between independent Pi sessions. One human command, one agent tool, and one private NATS broker. No agent spawning, transcript sharing, project manager, or third-party agent framework.
 
 ## Quick start
 
-Requirements: Node **22.19+**, Pi (tested with **0.82.0 and 0.84.1**), and `nats-server` (tested/pinned in CI: **2.14.6**). Obtain the server from [official releases](https://github.com/nats-io/nats-server/releases/tag/v2.14.6), or your package manager. The extension does not download or start it.
+Requirements: Node **22.19+**, Pi (tested with **0.82.0 and 0.84.1**), and `nats-server` (tested/pinned in CI: **2.14.6**). Homebrew/Chezmoi provisions the NATS binary on managed machines; the extension neither downloads nor installs packages. No OS-login service is added.
 
-From the repository root:
-
-```sh
-npm ci --ignore-scripts
-# Keep this foreground process running in a separate terminal:
-NATS_SERVER=/path/to/nats-server npm run broker --workspace pi-messaging
-```
-
-If `nats-server` is on PATH, omit `NATS_SERVER`. Port 4223 is the default; choose another on first setup with `-- --port 4423` and use that same port on subsequent starts. Ctrl+C stops only this launcher's child and preserves broker data. Use your normal service manager if you later want persistence across logins; no service is installed automatically.
+The first Pi session that loads the extension performs authenticated, loopback-only **infrastructure startup**: it starts NATS detached, initializes the private broker, and then disconnects. Concurrent sessions coordinate startup, and an already healthy broker—including one running in the foreground—is reused. This startup does **not** join a group, arm an allowance, admit or deliver messages, or otherwise enable participation. A startup error is reported as a messaging configuration error while Pi itself remains usable.
 
 Open two normal saved Pi sessions, loading the extension explicitly until you apply the repository's settings template:
 
@@ -81,12 +73,15 @@ There is no naming-only model call, automatic greeting, context hook, or sharing
 - `config.json`: private random token, loopback endpoint, authority UUID, initialization marker.
 - `server.json`: native NATS configuration; private token and `sync_interval: always`.
 - `data/`: JetStream storage. Never commit/export it automatically.
+- `broker.log`, `broker-process.json`, and the transient `startup.lock`: detached-startup diagnostics and coordination.
 
-Directories are owner-only (`0700`), config files `0600`; unsafe permissions and symlinks are rejected. V1 only accepts a `127.0.0.1` broker. No remote listener, broker auto-start, or secret logging is added by the extension.
+All detached broker state stays in this existing private messaging directory. Directories are owner-only (`0700`), config files `0600`; unsafe permissions and symlinks are rejected. V1 only accepts a `127.0.0.1` broker. No remote listener or secret logging is added by the extension.
 
 Limits: 8 KiB message bodies; eight queued messages/recipient; one unresolved outbound/sender; 64-code-point names; 16 active peers/group; 32 retained groups; 64 queued/uncertain messages/group; 2,000 retained message records and 512 peer records. Full stores reject new work rather than evict pending content. Send-time maintenance, throttled to once/minute per connection, removes eligible terminal history older than seven days; explicit prune can remove it earlier. Live-sender deduplication records are retained. Pruning also cleans consumers belonging to inactive/deleted identities, never merely stale active peers.
 
 Three pinned official runtime dependencies: `@nats-io/transport-node`, `@nats-io/jetstream`, `@nats-io/kv` **3.4.0**. Their queue/client dependencies add seven npm packages in the root lockfile. Pi packages remain host-provided peers; repository-wide Pi pins were not upgraded.
+
+For manual diagnosis, `NATS_SERVER=/path/to/nats-server npm run broker --workspace pi-messaging` remains a foreground launcher. If `nats-server` is on `PATH`, omit `NATS_SERVER`. Port 4223 is the default; choose another only on first setup with `-- --port 4423`. Ctrl+C stops only that launcher's child and preserves broker data. A healthy foreground launch is reused by Pi startup.
 
 ## Architecture in brief
 
@@ -104,7 +99,7 @@ NATS_SERVER=/path/to/nats-server npm run test:broker --workspace pi-messaging
 npm run typecheck
 ```
 
-Normal tests clearly skip broker cases if the binary is unavailable. The broker gate **fails** instead of skipping. Tests launch private temporary brokers, not the user's service. Scripted-provider tests use real Pi sessions and deferred work tools to verify busy queuing, idle wakeups, combined mixed-sender delivery, the admission race, and exact append-only request-prefix shape without paid inference. CI runs broker tests under Node 24 and the minimum Node 22.19.0.
+Normal tests clearly skip broker cases if the binary is unavailable. The broker gate **fails** instead of skipping. Tests launch private temporary brokers, not the user's service. The broker lifecycle implementation and tests do not install packages or connect to, stop, start, or modify the live broker. Scripted-provider tests use real Pi sessions and deferred work tools to verify busy queuing, idle wakeups, combined mixed-sender delivery, the admission race, and exact append-only request-prefix shape without paid inference. CI runs broker tests under Node 24 and the minimum Node 22.19.0.
 
 Opt-in live smoke (requires existing credentials; never rewrites them):
 
