@@ -4,7 +4,7 @@ import type { GroupRef, MessagingBackend } from '../src/contracts.ts';
 import { defaultAgentDir, readConfig } from '../src/config.ts';
 import { ensureBroker } from '../src/broker-lifecycle.ts';
 import { connectBackend } from '../src/nats-backend.ts';
-import { fail, safeText, validateDisplayName } from '../src/policy.ts';
+import { fail, peerPresence, safeText, validateDisplayName } from '../src/policy.ts';
 import { CUSTOM_TYPE, MessagingRuntime } from '../src/runtime.ts';
 import { handleMessages } from '../src/ui.ts';
 import { completeMessages } from '../src/completions.ts';
@@ -33,16 +33,29 @@ export function registerMessaging(
   let commandBusy = false;
   let renamingPeer: string | undefined;
   const tui = (ctx: ExtensionContext) => { if (ctx.mode !== 'tui') fail('mode', 'Messaging participation and controls require TUI mode'); };
-  async function detach(close: boolean): Promise<void> {
-    const current = runtime; runtime = undefined; joined = undefined;
-    try { if (current) await current.stop(); else await backend?.leave(); }
-    finally { if (close) { const old = backend; backend = undefined; await old?.close(); } }
+  async function detach(close: boolean, disposition: 'suspend' | 'leave' = 'suspend'): Promise<void> {
+    const current = runtime; const old = backend; runtime = undefined; joined = undefined;
+    let mustClose = close;
+    try {
+      if (current) await current.stop(disposition);
+      else if (disposition === 'leave') await old?.leave();
+      else await old?.suspend();
+    } catch (error) { mustClose = true; throw error; }
+    finally {
+      if (mustClose) { if (backend === old) backend = undefined; await old?.close(); }
+    }
   }
   const shutdown = async () => { epoch++; knownGroupLabels = []; await detach(true); };
   pi.on('session_start', async (_event, ctx) => {
-    await shutdown(); selected = undefined;
+    let departureError: unknown;
+    try { await shutdown(); } catch (error) { departureError = error; }
+    selected = undefined;
     try { await ensure(); }
     catch { if (ctx.hasUI) ctx.ui.notify('Messaging broker is unavailable; /messages will retry when requested.', 'warning'); }
+    if (departureError) {
+      if (ctx.hasUI) ctx.ui.notify(`Messaging suspension was uncertain; local state was closed. ${safeText(departureError instanceof Error ? departureError.message : String(departureError))}`, 'warning');
+      else throw departureError;
+    }
   });
   pi.on('session_shutdown', shutdown);
   pi.on('session_before_tree', async (_event, ctx) => { epoch++; await detach(false); if (ctx.mode === 'tui') ctx.ui.notify('Messaging detached for tree navigation; explicitly rejoin afterward.', 'info'); });
@@ -80,7 +93,7 @@ export function registerMessaging(
           backend: checked, selected, guard,
           groupsListed: groups => { guard(); knownGroupLabels = groups.map(group => group.label); },
           select: ref => { guard(); selected = ref; knownGroupLabels = [...new Set([...knownGroupLabels, ref.label])]; },
-          leave: async () => { await detach(false); },
+          leave: async () => { await detach(false, 'leave'); },
           joined: ref => {
             guard(); selected = joined = ref;
             runtime = new MessagingRuntime(raw, ref, {
@@ -120,7 +133,7 @@ export function registerMessaging(
         finally { if (renamingPeer === peerId) renamingPeer = undefined; }
         result = { id: peerId, sessionId: self.sessionId, displayName };
       } else if (params.action === 'peers') {
-        result = { selfId: peerId, selfSessionId: self.sessionId, selfDisplayName: self.displayName, peers: (await b.peers(group)).filter(p => p.active).map(p => ({ id: p.id, sessionId: p.sessionId, displayName: p.displayName, presence: Date.now() - p.lastSeen <= 30000 ? 'online' : 'stale' })) };
+        result = { selfId: peerId, selfSessionId: self.sessionId, selfDisplayName: self.displayName, peers: (await b.peers(group)).filter(p => p.active).map(p => ({ id: p.id, sessionId: p.sessionId, displayName: p.displayName, presence: peerPresence(p) })) };
       } else if (params.action === 'status') {
         if (params.beforeSequence !== undefined && (!Number.isSafeInteger(params.beforeSequence) || params.beforeSequence < 1)) fail('validation', 'Invalid beforeSequence');
         const all = (await b.listMessages(group)).filter(m => m.senderPeerId === peerId && m.sequence < (params.beforeSequence ?? Infinity));
@@ -130,7 +143,7 @@ export function registerMessaging(
         if (typeof params.toPeerId !== 'string' || typeof params.text !== 'string') fail('validation', 'send requires toPeerId and text');
         const message = await b.send({ toPeerId: params.toPeerId, text: params.text, ...(params.inReplyTo !== undefined ? { inReplyTo: params.inReplyTo } : {}) }, callId);
         const summary = await b.getGroupSummary(group); const recipient = (await b.peers(group)).find(p => p.id === params.toPeerId);
-        result = { id: message.id, recipientPeerId: message.recipientPeerId, state: message.state, note: 'Accepted by the messaging queue, not proof of task completion. Continue your assigned work; do not wait or poll for replies.', warning: summary?.mode !== 'armed' ? 'Automatic delivery is paused/exhausted.' : recipient && Date.now() - recipient.lastSeen > 30000 ? 'Recipient is stale.' : undefined };
+        result = { id: message.id, recipientPeerId: message.recipientPeerId, state: message.state, note: 'Accepted by the messaging queue, not proof of task completion. Continue your assigned work; do not wait or poll for replies.', warning: summary?.mode !== 'armed' ? 'Automatic delivery is paused/exhausted.' : recipient && peerPresence(recipient) !== 'online' ? `Recipient is ${peerPresence(recipient)}.` : undefined };
       }
       if (generation !== epoch || b.peer?.id !== peerId || joined?.id !== group.id) fail('participation', 'Session changed or participation ended during messaging operation; no automatic replay');
       return { content: [{ type: 'text', text: safeText(JSON.stringify(result)) }], details: {} };
