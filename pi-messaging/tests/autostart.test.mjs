@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { fork, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { chmod, lstat, mkdtemp, readFile, rm, stat, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -60,6 +60,28 @@ async function isolatedRoot(t) {
 }
 async function configBytes(root) {
   return readFile(join(root, 'messaging', 'config.json'));
+}
+async function runContenders(options, count) {
+  const children = Array.from({ length: count }, () => fork(
+    new URL('./helpers/autostart-contender.mjs', import.meta.url),
+    { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] },
+  ));
+  const completions = children.map(child => new Promise((resolve, reject) => {
+    let result; let stderr = '';
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('message', value => {
+      if (result !== undefined) reject(new Error('Contender returned more than one result'));
+      result = value;
+    });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code !== 0 || signal) reject(new Error(`Contender exited ${signal ?? code}: ${stderr}`));
+      else if (result === undefined) reject(new Error(`Contender exited without a result: ${stderr}`));
+      else resolve(result);
+    });
+  }));
+  for (const child of children) child.send(options);
+  return Promise.all(completions);
 }
 async function assertConfigUnchanged(root, before) {
   assert.deepEqual(await configBytes(root), before);
@@ -124,6 +146,19 @@ test('ensureBroker starts a detached private broker', { timeout: 15_000 }, async
   assert.deepEqual(Object.keys(processInfo).sort(), ['pid', 'server', 'startedAt']);
   assert.equal((await readFile(join(f.root, 'messaging', 'broker.log'), 'utf8')).includes(result.config.token), false);
   assert.equal(alive(processInfo.pid), true);
+});
+
+test('concurrent starter processes elect one broker authority that outlives them', { timeout: 30_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t);
+  const contend = async () => (await runContenders({ agentDir: f.root, binary, port: f.port }, 1))[0];
+  const results = await runContenders({ agentDir: f.root, binary, port: f.port }, 8);
+  assert.equal(results.filter(result => result.state === 'started').length, 1);
+  assert.equal(new Set(results.map(result => result.authorityId)).size, 1);
+  assert.equal((await contend()).state, 'running');
+  assert.equal(await probeBroker(readConfig(f.root)), 'ready');
+  const processFile = join(f.root, 'messaging', 'broker-process.json');
+  assert.equal(alive(JSON.parse(await readFile(processFile, 'utf8')).pid), true);
 });
 
 test('missing binary fails without replacing configuration authority', { timeout: 15_000 }, async t => {

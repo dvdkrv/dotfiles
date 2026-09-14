@@ -38,7 +38,7 @@ async function createReceiverSession(t, broker, receiver, streamSimple, customTo
   const settings = SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false }, enableInstallTelemetry: false });
   const loader = new DefaultResourceLoader({ cwd: broker.root, agentDir: broker.root, settingsManager: settings,
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-    extensionFactories: [pi => registerMessaging(pi, async () => receiver)] });
+    extensionFactories: [pi => registerMessaging(pi, async () => receiver, async () => {})] });
   await loader.reload();
   const created = await createAgentSession({ cwd: broker.root, agentDir: broker.root, modelRuntime: runtime, model, thinkingLevel: 'off',
     tools: ['peer_message', ...customTools.map(tool => tool.name)], customTools, resourceLoader: loader, settingsManager: settings,

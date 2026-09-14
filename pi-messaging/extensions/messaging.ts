@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { Text } from '@earendil-works/pi-tui';
 import type { GroupRef, MessagingBackend } from '../src/contracts.ts';
 import { defaultAgentDir, readConfig } from '../src/config.ts';
+import { ensureBroker } from '../src/broker-lifecycle.ts';
 import { connectBackend } from '../src/nats-backend.ts';
 import { fail, safeText, validateDisplayName } from '../src/policy.ts';
 import { CUSTOM_TYPE, MessagingRuntime } from '../src/runtime.ts';
@@ -18,7 +19,11 @@ async function configuredBackend(): Promise<MessagingBackend> {
   return connectBackend(config);
 }
 
-export function registerMessaging(pi: ExtensionAPI, factory: () => Promise<MessagingBackend> = configuredBackend): void {
+export function registerMessaging(
+  pi: ExtensionAPI,
+  factory: () => Promise<MessagingBackend> = configuredBackend,
+  ensure: () => Promise<unknown> = () => ensureBroker(),
+): void {
   let backend: MessagingBackend | undefined;
   let selected: GroupRef | undefined;
   let knownGroupLabels: string[] = [];
@@ -34,7 +39,11 @@ export function registerMessaging(pi: ExtensionAPI, factory: () => Promise<Messa
     finally { if (close) { const old = backend; backend = undefined; await old?.close(); } }
   }
   const shutdown = async () => { epoch++; knownGroupLabels = []; await detach(true); };
-  pi.on('session_start', async () => { await shutdown(); selected = undefined; });
+  pi.on('session_start', async (_event, ctx) => {
+    await shutdown(); selected = undefined;
+    try { await ensure(); }
+    catch { if (ctx.hasUI) ctx.ui.notify('Messaging broker is unavailable; /messages will retry when requested.', 'warning'); }
+  });
   pi.on('session_shutdown', shutdown);
   pi.on('session_before_tree', async (_event, ctx) => { epoch++; await detach(false); if (ctx.mode === 'tui') ctx.ui.notify('Messaging detached for tree navigation; explicitly rejoin afterward.', 'info'); });
   pi.on('agent_start', () => { void runtime?.wake(); });
@@ -55,6 +64,7 @@ export function registerMessaging(pi: ExtensionAPI, factory: () => Promise<Messa
         if (!backend || backend.closed) {
           knownGroupLabels = [];
           await detach(true); guard();
+          await ensure(); guard();
           const connected = await factory();
           if (generation !== epoch) { await connected.close(); guard(); }
           backend = connected;

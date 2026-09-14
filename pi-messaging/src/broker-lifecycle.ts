@@ -162,7 +162,12 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
   if (!Number.isFinite(probeTimeoutMs) || probeTimeoutMs < 50 || !Number.isFinite(startupTimeoutMs) || startupTimeoutMs < 250) fail('validation', 'Invalid broker startup timeout');
 
   let config = loadOrCreateConfig(agentDir, options.port);
-  if (await availableBeforeLock(config, probeTimeoutMs) === 'ready') return { state: 'running', config };
+  try {
+    if (await availableBeforeLock(config, probeTimeoutMs) === 'ready') return { state: 'running', config };
+  } catch {
+    // A lock owner can make the broker reachable before provisioning is complete.
+    // Re-check under the startup lock so waiters do not reject that transient state.
+  }
 
   const dir = messagingDir(agentDir); const lock = join(dir, 'startup.lock');
   const deadline = Date.now() + startupTimeoutMs;
@@ -177,7 +182,9 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const current = readConfig(agentDir);
-      if (await availableBeforeLock(current, probeTimeoutMs) === 'ready') return { state: 'running', config: current };
+      let readiness: BrokerReadiness | undefined; let probeError: unknown;
+      try { readiness = await availableBeforeLock(current, probeTimeoutMs); }
+      catch (probeFailure) { probeError = probeFailure; }
       let stale;
       try {
         privatePath(lock, false);
@@ -186,9 +193,10 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
         if ((inspectionError as NodeJS.ErrnoException).code === 'ENOENT') continue;
         throw inspectionError;
       }
+      if (readiness === 'ready') return { state: 'running', config: current };
       if (Date.now() - stale.mtimeMs > startupTimeoutMs) {
-        // Probe once more after establishing staleness, then only unlink the inode inspected.
-        if (await availableBeforeLock(readConfig(agentDir), probeTimeoutMs) === 'ready') return { state: 'running', config: readConfig(agentDir) };
+        // Reclaim only after an unavailable probe; malformed reachable brokers fail closed.
+        if (probeError) throw probeError;
         try {
           const currentLock = lstatSync(lock);
           if (currentLock.dev === stale.dev && currentLock.ino === stale.ino) unlinkSync(lock);

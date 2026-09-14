@@ -66,7 +66,7 @@ test('role tool publishes self-name without rerouting queued work or inheriting 
     ui: { confirm: async () => true, input: async () => { throw Error('No name input'); }, notify: () => {}, setStatus: () => {} } };
   registerMessaging({ on: (name, fn) => events.set(name, fn), registerCommand: (name, command) => commands.set(name, command),
     registerTool: tool => tools.set(tool.name, tool), registerMessageRenderer: () => {}, getActiveTools: () => ['peer_message'],
-    sendMessage: (...args) => delivered.push(args) }, async () => f.a);
+    sendMessage: (...args) => delivered.push(args) }, async () => f.a, async () => {});
   t.after(() => events.get('session_shutdown')({}, ctx));
   await f.a.leave(); await commands.get('messages').handler('join testing', ctx);
   const oldId = f.a.peer.id; await f.a.arm(f.g, 3);

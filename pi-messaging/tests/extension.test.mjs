@@ -20,7 +20,8 @@ function fixture(t) {
   const other = p.joinPeer(state, group, { sessionId: 'other', displayName: 'Other' });
   const events = new Map(); const commands = new Map(); const tools = new Map(); const renderers = new Map();
   const bodies = new Map(); const activeTools = ['peer_message'];
-  const delivered = []; const notices = []; const statuses = []; const confirmations = []; const connectCalls = [];
+  const delivered = []; const notices = []; const statuses = []; const confirmations = [];
+  const ensureCalls = []; const connectCalls = []; let callSequence = 0; let ensureError;
   let peer; let closed = false;
   const backend = {
     get peer() { return peer; }, get closed() { return closed; },
@@ -42,12 +43,19 @@ function fixture(t) {
     registerTool: tool => tools.set(tool.name, tool), registerMessageRenderer: (name, renderer) => renderers.set(name, renderer),
     sendMessage: (...args) => delivered.push(args), getSessionName: () => 'Local', getActiveTools: () => activeTools,
   };
-  const ctx = { mode: 'tui', isIdle: () => true, sessionManager: { getSessionFile: () => '/tmp/session.jsonl', getSessionId: () => 'local', getSessionName: () => 'Local' },
+  const ctx = { mode: 'tui', hasUI: true, isIdle: () => true, sessionManager: { getSessionFile: () => '/tmp/session.jsonl', getSessionId: () => 'local', getSessionName: () => 'Local' },
     ui: { notify: (...args) => notices.push(args), setStatus: (...args) => statuses.push(args),
       confirm: async (...args) => { confirmations.push(args); return true; }, input: async () => 'Local', select: async (_, choices) => choices[0], editor: async () => 'human text' } };
-  registerMessaging(pi, async () => { connectCalls.push(1); return backend; });
+  registerMessaging(
+    pi,
+    async () => { connectCalls.push(++callSequence); return backend; },
+    async () => { ensureCalls.push(++callSequence); if (ensureError) throw ensureError; },
+  );
   t.after(async () => { await events.get('session_shutdown')?.({}, ctx); });
-  return { state, group, other, backend, events, commands, tools, renderers, delivered, notices, statuses, confirmations, connectCalls, activeTools, ctx, pi };
+  return {
+    state, group, other, backend, events, commands, tools, renderers, delivered, notices, statuses, confirmations,
+    ensureCalls, connectCalls, setEnsureError: error => { ensureError = error; }, activeTools, ctx, pi,
+  };
 }
 async function execute(f, action, fields = {}) { return f.tools.get('peer_message').execute(randomUUID(), { action, ...fields }, undefined, undefined, f.ctx); }
 
@@ -105,12 +113,41 @@ test('newly created groups become completable without retaining them across relo
   assert.equal(complete('join new'), null);
 });
 
-test('factory/session_start are inert and non-TUI controls fail before connection', async t => {
-  const f = fixture(t); assert.equal(f.connectCalls.length, 0);
-  await f.events.get('session_start')({}, f.ctx); assert.equal(f.connectCalls.length, 0);
+test('session start ensures infrastructure without participation', async t => {
+  const f = fixture(t);
+  assert.equal(f.ensureCalls.length, 0); assert.equal(f.connectCalls.length, 0);
+  await f.events.get('session_start')({ reason: 'startup' }, f.ctx);
+  assert.equal(f.ensureCalls.length, 1);
+  assert.equal(f.connectCalls.length, 0);
+  assert.equal(f.backend.peer, undefined);
+  assert.equal(f.delivered.length, 0);
+});
+
+test('startup failure warns without participation or model work', async t => {
+  const f = fixture(t); const groupBefore = structuredClone(f.state.groups[f.group.id]);
+  f.setEnsureError(new Error('private readiness failure'));
+  await f.events.get('session_start')({ reason: 'startup' }, f.ctx);
+  assert.equal(f.ensureCalls.length, 1); assert.equal(f.connectCalls.length, 0);
+  assert.equal(f.notices.length, 1); assert.match(f.notices[0][0], /broker|messaging/i); assert.equal(f.notices[0][1], 'warning');
+  assert.equal(f.backend.peer, undefined); assert.deepEqual(f.state.groups[f.group.id], groupBefore);
+  assert.equal(f.delivered.length, 0);
+});
+
+test('command retries readiness before backend connection', async t => {
+  const f = fixture(t); f.setEnsureError(new Error('not ready'));
+  await f.events.get('session_start')({ reason: 'startup' }, f.ctx);
+  f.setEnsureError(undefined);
+  await f.commands.get('messages').handler('status', f.ctx);
+  assert.equal(f.ensureCalls.length, 2); assert.equal(f.connectCalls.length, 1);
+  assert.ok(f.ensureCalls[1] < f.connectCalls[0]);
+  assert.equal(f.backend.peer, undefined); assert.equal(f.delivered.length, 0);
+});
+
+test('non-TUI controls fail before readiness or connection', async t => {
+  const f = fixture(t);
   for (const mode of ['rpc', 'json', 'print']) await assert.rejects(f.commands.get('messages').handler('join review', { ...f.ctx, mode }), /TUI/i);
   await assert.rejects(execute(f, 'send', { toPeerId: f.other.id, text: 'x' }), /join/i);
-  assert.equal(f.connectCalls.length, 0);
+  assert.equal(f.ensureCalls.length, 0); assert.equal(f.connectCalls.length, 0);
 });
 
 test('human join and arm are explicit; agent cannot grant itself controls or read pending bodies', async t => {
