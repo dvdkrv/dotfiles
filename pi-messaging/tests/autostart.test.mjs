@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fork, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { chmod, lstat, mkdtemp, readFile, rm, stat, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, rename, rm, stat, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -160,6 +160,101 @@ test('ensureBroker starts a detached private broker', { timeout: 15_000 }, async
   assert.equal(alive(processInfo.pid), true);
 });
 
+test('healthy exact state repairs an uninitialized marker under startup ownership', { timeout: 15_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t);
+  const foreground = await runBroker(f.root, binary, f.port);
+  t.after(() => foreground.stop());
+  const config = readConfig(f.root);
+  await writeFile(
+    join(f.root, 'messaging', 'config.json'),
+    `${JSON.stringify({ ...config, initialized: false }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+
+  const result = await ensureBroker({ agentDir: f.root, binary, port: f.port });
+
+  assert.equal(result.state, 'running');
+  assert.equal(result.config.initialized, true);
+  assert.equal(readConfig(f.root).initialized, true);
+  await assert.rejects(lstat(join(f.root, 'messaging', 'startup.lock')), /ENOENT/);
+});
+
+test('startup repairs the crash window after exact state persisted before its initialized marker', { timeout: 15_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t);
+  const foreground = await runBroker(f.root, binary, f.port);
+  await foreground.stop();
+  const config = readConfig(f.root);
+  await writeFile(
+    join(f.root, 'messaging', 'config.json'),
+    `${JSON.stringify({ ...config, initialized: false }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+
+  const result = await ensureBroker({ agentDir: f.root, binary, port: f.port });
+
+  assert.equal(result.state, 'started');
+  assert.equal(result.config.initialized, true);
+  assert.equal(readConfig(f.root).initialized, true);
+  await assert.rejects(lstat(join(f.root, 'messaging', 'startup.lock')), /ENOENT/);
+});
+
+test('healthy broker rejects group-readable lifecycle paths', { timeout: 30_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t);
+  const foreground = await runBroker(f.root, binary, f.port);
+  t.after(() => foreground.stop());
+  const dir = join(f.root, 'messaging');
+  await writeFile(join(dir, 'broker.log'), '', { mode: 0o600 });
+  await writeFile(join(dir, 'broker-process.json'), '{}\n', { mode: 0o600 });
+  const cases = [
+    ['messaging root', dir, 0o700, 0o750],
+    ['config.json', join(dir, 'config.json'), 0o600, 0o640],
+    ['server.json', join(dir, 'server.json'), 0o600, 0o640],
+    ['broker.log', join(dir, 'broker.log'), 0o600, 0o640],
+    ['broker-process.json', join(dir, 'broker-process.json'), 0o600, 0o640],
+    ['data', join(dir, 'data'), 0o700, 0o750],
+  ];
+  for (const [name, path, privateMode, unsafeMode] of cases) await t.test(name, async () => {
+    await chmod(path, unsafeMode);
+    try {
+      await assert.rejects(
+        ensureBroker({ agentDir: f.root, binary, port: f.port }),
+        /private|permissions|configuration/i,
+      );
+    } finally {
+      await chmod(path, privateMode);
+    }
+  });
+});
+
+test('healthy broker rejects symlinked lifecycle paths', { timeout: 30_000 }, async t => {
+  if (!requireBroker(t)) return;
+  for (const name of ['server.json', 'data']) await t.test(name, async t => {
+    const f = await isolatedRoot(t);
+    const foreground = await runBroker(f.root, binary, f.port);
+    t.after(() => foreground.stop());
+    const path = join(f.root, 'messaging', name);
+    const target = join(f.root, 'messaging', `${name}.target`);
+    await rename(path, target);
+    await symlink(target, path);
+
+    await assert.rejects(
+      ensureBroker({ agentDir: f.root, binary, port: f.port }),
+      /symlink|private|configuration/i,
+    );
+  });
+});
+
+test('probeBroker rejects non-finite and sub-50ms timeouts', async t => {
+  const f = await isolatedRoot(t);
+  const config = prepareConfig(f.root, f.port);
+  for (const timeoutMs of [49, Number.NaN, Number.POSITIVE_INFINITY]) {
+    await assert.rejects(() => probeBroker(config, timeoutMs), /timeout|validation/i);
+  }
+});
+
 test('concurrent starter processes elect one broker authority that outlives them', { timeout: 30_000 }, async t => {
   if (!requireBroker(t)) return;
   const f = await isolatedRoot(t);
@@ -218,6 +313,30 @@ test('initialized configuration with missing streams is never reinitialized', { 
   await writeFile(rawProcessFile, JSON.stringify({ pid: child.pid }), { mode: 0o600 }); f.trackChild(child, rawProcessFile);
   await assert.rejects(ensureBroker({ agentDir: f.root, binary, port: f.port }), /stream|bucket|not found|missing/i);
   await assertConfigUnchanged(f.root, before);
+});
+
+test('uninitialized persisted partial stream state fails closed after broker start', { timeout: 15_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t); const config = prepareConfig(f.root, f.port);
+  const before = await configBytes(f.root); const serverFile = writeServerConfig(f.root, config);
+  const rawProcessFile = join(f.root, 'messaging', 'raw-broker-process.json');
+  const child = await startRawBroker(t, serverFile, rawProcessFile, false);
+  await writeFile(rawProcessFile, JSON.stringify({ pid: child.pid }), { mode: 0o600 }); f.trackChild(child, rawProcessFile);
+  const nc = await connect({ servers: config.server, token: config.token, reconnect: false });
+  try {
+    await (await jetstreamManager(nc)).streams.add({
+      name: 'PM_MESSAGES', subjects: ['pm.message.>'], storage: 'file', retention: 'limits', discard: 'new',
+      max_msgs: 2000, max_bytes: 32 * 1024 * 1024, max_msg_size: 65536, max_age: 0, max_consumers: 512,
+    });
+  } finally { await nc.close(); }
+  const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited;
+
+  await assert.rejects(
+    ensureBroker({ agentDir: f.root, binary, port: f.port }),
+    /partial|incompatible|stream|bucket|missing/i,
+  );
+  await assertConfigUnchanged(f.root, before);
+  assert.equal(readConfig(f.root).initialized, false);
 });
 
 test('symlink lock, server, and log paths fail without replacing configuration', { timeout: 15_000 }, async t => {

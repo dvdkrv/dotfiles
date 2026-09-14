@@ -19,6 +19,7 @@ export type BrokerReadiness = 'ready' | 'unavailable';
 
 const unavailablePattern = /ECONNREFUSED|connection refused|TIMEOUT|timed out|no servers available/i;
 const stateNames = ['data', 'server.json', 'broker.log', 'broker-process.json', 'startup.lock'];
+const lifecycleFiles = ['server.json', 'broker.log', 'broker-process.json'];
 
 function writePrivate(path: string, value: string): void {
   if (existsSync(path)) privatePath(path, false);
@@ -66,6 +67,7 @@ function isUnavailable(error: unknown): boolean {
 
 export async function probeBroker(config: BrokerConfig, timeoutMs = 500): Promise<BrokerReadiness> {
   validateConfig(config);
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 50) fail('validation', 'Broker probe timeout must be finite and at least 50ms');
   try {
     const backend = await connectBackend(config, { timeoutMs });
     await backend.close();
@@ -92,6 +94,26 @@ async function initializeOrProbe(agentDir: string, config: BrokerConfig, timeout
 function pathLexicallyExists(path: string): boolean {
   try { lstatSync(path); return true; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+}
+
+function validateLifecyclePrivacy(agentDir: string): BrokerConfig {
+  const config = readConfig(agentDir);
+  const dir = messagingDir(agentDir);
+  for (const name of lifecycleFiles) {
+    const path = join(dir, name);
+    if (pathLexicallyExists(path)) privatePath(path, false);
+  }
+  const data = join(dir, 'data');
+  if (pathLexicallyExists(data)) privatePath(data, true);
+  return config;
+}
+
+function readyResult(agentDir: string, state: 'running' | 'started', expected: BrokerConfig): { state: 'running' | 'started'; config: BrokerConfig } {
+  const config = validateLifecyclePrivacy(agentDir);
+  if (!config.initialized || config.authorityId !== expected.authorityId || config.token !== expected.token || config.server !== expected.server) {
+    fail('authority', 'Messaging configuration changed during broker readiness');
+  }
+  return { state, config };
 }
 
 function loadOrCreateConfig(agentDir: string, port: number | undefined): BrokerConfig {
@@ -148,12 +170,6 @@ async function waitForReady(agentDir: string, child: ChildProcess, timeoutMs: nu
   throw outcome.error;
 }
 
-function availableBeforeLock(config: BrokerConfig, timeoutMs: number): Promise<BrokerReadiness> {
-  // This strict probe never provisions an uninitialized authority. Provisioning is
-  // reserved for initializeOrProbe(), which is only called while startup.lock is held.
-  return probeBroker(config, timeoutMs);
-}
-
 export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{ state: 'running' | 'started'; config: BrokerConfig }> {
   const agentDir = options.agentDir ?? defaultAgentDir();
   const binary = options.binary ?? process.env.NATS_SERVER ?? 'nats-server';
@@ -162,11 +178,8 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
   if (!Number.isFinite(probeTimeoutMs) || probeTimeoutMs < 50 || !Number.isFinite(startupTimeoutMs) || startupTimeoutMs < 250) fail('validation', 'Invalid broker startup timeout');
 
   let config = loadOrCreateConfig(agentDir, options.port);
-  try {
-    if (await availableBeforeLock(config, probeTimeoutMs) === 'ready') return { state: 'running', config };
-  } catch {
-    // A lock owner can make the broker reachable before provisioning is complete.
-    // Re-check under the startup lock so waiters do not reject that transient state.
+  if (config.initialized && await probeBroker(config, probeTimeoutMs) === 'ready') {
+    return readyResult(agentDir, 'running', config);
   }
 
   const dir = messagingDir(agentDir); const lock = join(dir, 'startup.lock');
@@ -183,7 +196,7 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const current = readConfig(agentDir);
       let readiness: BrokerReadiness | undefined; let probeError: unknown;
-      try { readiness = await availableBeforeLock(current, probeTimeoutMs); }
+      try { readiness = await probeBroker(current, probeTimeoutMs); }
       catch (probeFailure) { probeError = probeFailure; }
       let stale;
       try {
@@ -193,7 +206,7 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
         if ((inspectionError as NodeJS.ErrnoException).code === 'ENOENT') continue;
         throw inspectionError;
       }
-      if (readiness === 'ready') return { state: 'running', config: current };
+      if (readiness === 'ready' && current.initialized) return readyResult(agentDir, 'running', current);
       if (Date.now() - stale.mtimeMs > startupTimeoutMs) {
         // Reclaim only after an unavailable probe; malformed reachable brokers fail closed.
         if (probeError) throw probeError;
@@ -214,7 +227,11 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
   let logFd: number | undefined;
   try {
     config = readConfig(agentDir);
-    if (await initializeOrProbe(agentDir, config, probeTimeoutMs) === 'ready') return { state: 'running', config: readConfig(agentDir) };
+    if (await probeBroker(config, probeTimeoutMs) === 'ready') {
+      validateLifecyclePrivacy(agentDir);
+      if (!config.initialized) markInitialized(agentDir, config);
+      return readyResult(agentDir, 'running', config);
+    }
     const serverFile = writeServerConfig(agentDir, config);
     const log = join(dir, 'broker.log');
     if (existsSync(log)) privatePath(log, false);
@@ -228,7 +245,7 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
     writePrivateJson(join(dir, 'broker-process.json'), { pid: child.pid, startedAt: Date.now(), server: config.server });
     const ready = await waitForReady(agentDir, child, Math.max(250, deadline - Date.now()), probeTimeoutMs);
     child.unref();
-    return { state: 'started', config: ready };
+    return readyResult(agentDir, 'started', ready);
   } catch (error) {
     if (child) await stopChild(child);
     throw error;

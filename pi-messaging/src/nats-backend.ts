@@ -20,13 +20,24 @@ export async function connectBackend(config: BrokerConfig, options: { initialize
     const js = jetstream(nc, { timeout: timeoutMs });
     const jsm = await jetstreamManager(nc, { timeout: timeoutMs });
     const kvm = new Kvm(js);
+    let initializeEmpty = false;
     if (options.initialize) {
-      await jsm.streams.add({ name: STREAM, subjects: ['pm.message.>'], storage: StorageType.File, retention: RetentionPolicy.Limits, discard: DiscardPolicy.New, max_msgs: 2000, max_bytes: 32 * 1024 * 1024, max_msg_size: 65536, max_age: 0, max_consumers: 512 });
+      const streamExists = async (name: string): Promise<boolean> => {
+        try { await jsm.streams.info(name); return true; }
+        catch (error) { if (apiCode(error, 10059)) return false; throw error; }
+      };
+      const messagesExist = await streamExists(STREAM);
+      const bucketExists = await streamExists(`KV_${BUCKET}`);
+      if (messagesExist !== bucketExists) policy.fail('configuration', 'Unsafe or incompatible partial broker stream state');
+      initializeEmpty = !messagesExist;
+      if (initializeEmpty) {
+        await jsm.streams.add({ name: STREAM, subjects: ['pm.message.>'], storage: StorageType.File, retention: RetentionPolicy.Limits, discard: DiscardPolicy.New, max_msgs: 2000, max_bytes: 32 * 1024 * 1024, max_msg_size: 65536, max_age: 0, max_consumers: 512 });
+      }
     }
-    const kv = options.initialize
+    const kv = initializeEmpty
       ? await kvm.create(BUCKET, { history: 1, storage: StorageType.File, maxValueSize: 2 * 1024 * 1024, max_bytes: 8 * 1024 * 1024 })
       : await kvm.open(BUCKET);
-    if (options.initialize && !(await kv.get('state'))) await kv.create('state', JSON.stringify(policy.newLedger(config.authorityId)));
+    if (initializeEmpty) await kv.create('state', JSON.stringify(policy.newLedger(config.authorityId)));
     const stream = (await jsm.streams.info(STREAM)).config;
     const bucket = (await jsm.streams.info(`KV_${BUCKET}`)).config;
     if (stream.storage !== StorageType.File || stream.retention !== RetentionPolicy.Limits || stream.discard !== DiscardPolicy.New || stream.max_age !== 0 || stream.max_msgs !== 2000 || stream.max_bytes !== 32 * 1024 * 1024 || stream.max_msg_size !== 65536 || stream.max_consumers !== 512 || stream.subjects?.join() !== 'pm.message.>' || bucket.storage !== StorageType.File || bucket.max_age !== 0 || bucket.max_msgs_per_subject !== 1 || bucket.max_bytes !== 8 * 1024 * 1024 || bucket.max_msg_size !== 2 * 1024 * 1024) policy.fail('configuration', 'Unsafe or incompatible broker stream configuration');
