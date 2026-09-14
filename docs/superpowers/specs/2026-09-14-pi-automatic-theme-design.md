@@ -26,7 +26,7 @@ The selected approach uses public Pi settings and built-in themes. It adds no ex
 
 ## Configuration and rollout
 
-Add the setting to `dot_pi/agent/settings.json.tmpl`, the chezmoi-managed source for the global Pi settings. Apply that one managed target to the current local Pi settings only after tests pass. Do not alter saved conversations, active session histories, extensions, tools, loops, or messaging participation.
+Add the setting to `dot_pi/agent/settings.json.tmpl`, the chezmoi-managed source for the global Pi settings. Only after tests pass, atomically update the installed settings' top-level `theme` value while preserving every other key and the file mode. Do not render and apply the template from the linked feature worktree: its `.chezmoi.sourceDir` would temporarily replace the installed package paths with worktree paths. Once the branch is merged, the normal main checkout again supplies the same managed value. Do not alter saved conversations, active session histories, extensions, tools, loops, or messaging participation.
 
 Existing Pi processes do not need to be killed. The human can run `/reload` at a safe idle boundary in each affected session; Pi reloads settings, reapplies the theme controller, rebuilds the chat rendering, queries terminal appearance, and enables automatic color-scheme notifications. Starting a new Pi process also picks up the setting. Reload timing remains human-controlled.
 

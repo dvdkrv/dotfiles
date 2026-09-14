@@ -4,7 +4,7 @@
 
 **Goal:** Configure every Pi process to use Pi's built-in automatic `light/dark` theme mode instead of relying on one-shot startup detection.
 
-**Architecture:** Add the public slash-form theme pair to the chezmoi-managed global Pi settings. Protect the exact setting with an existing repository configuration test, validate the rendered managed target without printing its contents, and apply only that target to the current machine after verification.
+**Architecture:** Add the public slash-form theme pair to the chezmoi-managed global Pi settings. Protect the exact setting with an existing repository configuration test and validate the rendered target without printing its contents. After verification, atomically change only the installed settings' top-level theme value; never apply a linked-worktree rendering whose `.chezmoi.sourceDir` would replace stable package paths.
 
 **Tech Stack:** JSON Pi settings, chezmoi, Node.js built-in test runner, repository shell checks.
 
@@ -14,8 +14,8 @@
 - Use only Pi's built-in themes and automatic color-scheme notifications; add no extension, custom theme, dependency, polling loop, or terminal escape implementation.
 - Do not modify saved conversations, session histories, extension/tool state, loops, messaging state, tmux, Ghostty, or upstream Pi files.
 - Do not reload, restart, or send input to active Pi sessions; session reload timing remains human-controlled.
-- Apply only the managed `~/.pi/agent/settings.json` target after all repository checks pass.
-- Never print the complete rendered or installed settings file.
+- Update only the top-level `theme` value in `~/.pi/agent/settings.json` after all repository checks pass; preserve every other value and the existing file mode.
+- Never apply a template rendered with the linked worktree as `.chezmoi.sourceDir`, and never print the complete rendered or installed settings file.
 - Every repository commit must be SSH-signed.
 
 ---
@@ -92,21 +92,43 @@ git log -1 --show-signature --format='%h %G? %s'
 
 Expected: a good SSH signature.
 
-- [ ] **Step 7: Apply only the verified managed target**
+- [ ] **Step 7: Atomically update only the installed theme value**
 
-From this worktree, explicitly select it as the chezmoi source and apply only the Pi settings target:
+Do not apply a template from the linked worktree because its `.chezmoi.sourceDir` would replace the stable package paths. Preserve every existing JSON value and file mode while changing only the top-level theme:
 
 ```bash
-chezmoi --source "$PWD" apply ~/.pi/agent/settings.json
 python3 - <<'PY'
-import json
+import json, os, stat, tempfile
 from pathlib import Path
-settings = json.loads(Path.home().joinpath('.pi/agent/settings.json').read_text())
-assert settings.get('theme') == 'light/dark'
+path = Path.home() / '.pi/agent/settings.json'
+before = path.lstat()
+assert stat.S_ISREG(before.st_mode) and not path.is_symlink()
+settings = json.loads(path.read_text())
+settings['theme'] = 'light/dark'
+fd, temporary = tempfile.mkstemp(prefix=f'.{path.name}.', dir=path.parent)
+try:
+    os.fchmod(fd, stat.S_IMODE(before.st_mode))
+    with os.fdopen(fd, 'w') as handle:
+        json.dump(settings, handle, indent=2)
+        handle.write('\n')
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+installed = json.loads(path.read_text())
+assert installed.get('theme') == 'light/dark'
+assert stat.S_IMODE(path.stat().st_mode) == stat.S_IMODE(before.st_mode)
 PY
 ```
 
-Expected: PASS with no settings body printed. Do not invoke `/reload` or manipulate a Pi pane.
+Expected: PASS with no settings body printed. Do not invoke `/reload` or manipulate a Pi pane. After this branch is merged, normal chezmoi application from `main` will retain the same theme value and stable package paths.
 
 - [ ] **Step 8: Verify final branch state**
 
