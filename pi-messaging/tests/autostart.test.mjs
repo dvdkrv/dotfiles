@@ -1,0 +1,198 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { chmod, lstat, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createJiti } from 'jiti';
+import { freePort } from './helpers/broker.mjs';
+
+const jiti = createJiti(import.meta.url);
+const { ensureBroker, probeBroker, writeServerConfig } = await jiti.import('../src/broker-lifecycle.ts');
+const { runBroker } = await jiti.import('../src/broker.ts');
+const { prepareConfig, readConfig } = await jiti.import('../src/config.ts');
+
+const binary = process.env.NATS_SERVER || 'nats-server';
+function requireBroker(t) {
+  if (spawnSync(binary, ['--version']).status === 0) return true;
+  if (process.env.PI_MESSAGING_REQUIRE_BROKER) throw new Error('NATS_SERVER required');
+  t.skip('nats-server unavailable'); return false;
+}
+async function until(check, label, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+async function stopPid(pid) {
+  if (!alive(pid)) return;
+  try { process.kill(pid, 'SIGTERM'); } catch { return; }
+  await until(() => !alive(pid), `broker ${pid} exit`);
+}
+async function isolatedRoot(t) {
+  const root = await mkdtemp(join(tmpdir(), 'pi-messaging-autostart-'));
+  const port = await freePort(); const ownedChildren = [];
+  t.after(async () => {
+    for (const { child, processFile } of ownedChildren) {
+      try {
+        const { pid } = JSON.parse(await readFile(processFile, 'utf8'));
+        if (pid === child.pid && child.exitCode === null && child.signalCode === null) {
+          const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited;
+        }
+      } catch {}
+    }
+    try {
+      const value = JSON.parse(await readFile(join(root, 'messaging', 'broker-process.json'), 'utf8'));
+      if (Number.isSafeInteger(value.pid)) await stopPid(value.pid);
+    } catch {}
+    await rm(root, { recursive: true, force: true });
+  });
+  return { root, port, trackChild(child, processFile) { ownedChildren.push({ child, processFile }); } };
+}
+async function configBytes(root) {
+  return readFile(join(root, 'messaging', 'config.json'));
+}
+async function assertConfigUnchanged(root, before) {
+  assert.deepEqual(await configBytes(root), before);
+}
+async function startRawBroker(t, serverFile, processFile, registerCleanup = true) {
+  const child = spawn(binary, ['-c', serverFile], { stdio: ['ignore', 'ignore', 'pipe'] });
+  if (registerCleanup) t.after(async () => {
+    try {
+      const { pid } = JSON.parse(await readFile(processFile, 'utf8'));
+      if (Number.isSafeInteger(pid) && pid === child.pid && child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited;
+      }
+    } catch {}
+  });
+  await new Promise((resolve, reject) => {
+    let output = ''; const timer = setTimeout(() => reject(new Error(output || 'broker timeout')), 5000);
+    child.stderr.on('data', chunk => { output += chunk; if (output.includes('Server is ready')) { clearTimeout(timer); resolve(); } });
+    child.once('error', error => { clearTimeout(timer); reject(error); });
+    child.once('exit', code => { clearTimeout(timer); reject(new Error(`broker exited ${code}: ${output}`)); });
+  });
+  return child;
+}
+async function startForeign(t, root, port) {
+  const config = prepareConfig(root, port);
+  const foreignRoot = await mkdtemp(join(tmpdir(), 'pi-messaging-foreign-'));
+  const serverFile = join(foreignRoot, 'server.json');
+  await writeFile(serverFile, JSON.stringify({
+    host: '127.0.0.1', port,
+    authorization: { token: 'f'.repeat(64) },
+    jetstream: { store_dir: join(foreignRoot, 'data') },
+  }), { mode: 0o600 });
+  const child = await startRawBroker(t, serverFile, join(foreignRoot, 'broker-process.json'));
+  await writeFile(join(foreignRoot, 'broker-process.json'), JSON.stringify({ pid: child.pid }), { mode: 0o600 });
+  t.after(() => rm(foreignRoot, { recursive: true, force: true }));
+  return config;
+}
+
+// These are real-process tests: every detached PID is scoped to, read from, and
+// cleaned up through broker-process.json beneath its own temporary agent root.
+test('healthy authenticated broker is an autostart no-op', { timeout: 15_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t);
+  const foreground = await runBroker(f.root, binary, f.port);
+  t.after(() => foreground.stop());
+  const before = await stat(join(f.root, 'messaging', 'server.json'));
+  const result = await ensureBroker({ agentDir: f.root, binary, port: f.port });
+  assert.equal(result.state, 'running');
+  assert.equal((await stat(join(f.root, 'messaging', 'server.json'))).mtimeMs, before.mtimeMs);
+  assert.equal(await probeBroker(result.config), 'ready');
+});
+
+test('ensureBroker starts a detached private broker', { timeout: 15_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t);
+  const result = await ensureBroker({ agentDir: f.root, binary, port: f.port });
+  assert.equal(result.state, 'started');
+  assert.equal(readConfig(f.root).initialized, true);
+  for (const name of ['config.json', 'server.json', 'broker.log', 'broker-process.json']) {
+    assert.equal((await stat(join(f.root, 'messaging', name))).mode & 0o777, 0o600);
+  }
+  const processInfo = JSON.parse(await readFile(join(f.root, 'messaging', 'broker-process.json'), 'utf8'));
+  assert.deepEqual(Object.keys(processInfo).sort(), ['pid', 'server', 'startedAt']);
+  assert.equal((await readFile(join(f.root, 'messaging', 'broker.log'), 'utf8')).includes(result.config.token), false);
+  assert.equal(alive(processInfo.pid), true);
+});
+
+test('missing binary fails without replacing configuration authority', { timeout: 15_000 }, async t => {
+  const f = await isolatedRoot(t); prepareConfig(f.root, f.port); const before = await configBytes(f.root);
+  await assert.rejects(
+    ensureBroker({ agentDir: f.root, binary: join(f.root, 'missing-nats'), port: f.port, startupTimeoutMs: 1000 }),
+    /spawn|ENOENT|nats-server|binary/i,
+  );
+  await assertConfigUnchanged(f.root, before);
+});
+
+test('a different-token process occupying the port fails closed', { timeout: 15_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t); await startForeign(t, f.root, f.port); const before = await configBytes(f.root);
+  await assert.rejects(
+    ensureBroker({ agentDir: f.root, binary, port: f.port, startupTimeoutMs: 1000 }),
+    /authentication|authorization|permissions/i,
+  );
+  await assertConfigUnchanged(f.root, before);
+});
+
+test('initialized configuration with missing streams is never reinitialized', { timeout: 15_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t); const config = prepareConfig(f.root, f.port);
+  await writeFile(join(f.root, 'messaging', 'config.json'), `${JSON.stringify({ ...config, initialized: true }, null, 2)}\n`, { mode: 0o600 });
+  const before = await configBytes(f.root); const serverFile = writeServerConfig(f.root, readConfig(f.root));
+  const rawProcessFile = join(f.root, 'messaging', 'raw-broker-process.json');
+  const child = await startRawBroker(t, serverFile, rawProcessFile, false);
+  await writeFile(rawProcessFile, JSON.stringify({ pid: child.pid }), { mode: 0o600 }); f.trackChild(child, rawProcessFile);
+  await assert.rejects(ensureBroker({ agentDir: f.root, binary, port: f.port }), /stream|bucket|not found|missing/i);
+  await assertConfigUnchanged(f.root, before);
+});
+
+test('symlink lock, server, and log paths fail without replacing configuration', { timeout: 15_000 }, async t => {
+  for (const name of ['startup.lock', 'server.json', 'broker.log']) {
+    await t.test(name, async t => {
+      const f = await isolatedRoot(t); prepareConfig(f.root, f.port); const before = await configBytes(f.root);
+      const target = join(f.root, `${name}.target`); await writeFile(target, 'sentinel', { mode: 0o600 });
+      await symlink(target, join(f.root, 'messaging', name));
+      await assert.rejects(
+        ensureBroker({ agentDir: f.root, binary, port: f.port, startupTimeoutMs: 500 }),
+        /symlink|private|ELOOP|configuration/i,
+      );
+      assert.equal(await readFile(target, 'utf8'), 'sentinel');
+      await assertConfigUnchanged(f.root, before);
+    });
+  }
+});
+
+test('group-readable messaging files fail closed', { timeout: 15_000 }, async t => {
+  for (const name of ['config.json', 'startup.lock', 'server.json', 'broker.log']) {
+    await t.test(name, async t => {
+      const f = await isolatedRoot(t); prepareConfig(f.root, f.port);
+      const path = join(f.root, 'messaging', name);
+      if (name !== 'config.json') await writeFile(path, '{}', { mode: 0o600 });
+      const before = await configBytes(f.root); await chmod(path, 0o640);
+      await assert.rejects(
+        ensureBroker({ agentDir: f.root, binary, port: f.port, startupTimeoutMs: 500 }),
+        /private|permissions|configuration/i,
+      );
+      await assertConfigUnchanged(f.root, before);
+    });
+  }
+});
+
+test('a stale private startup lock is reclaimed only after an unavailable probe', { timeout: 15_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t); prepareConfig(f.root, f.port);
+  const lock = join(f.root, 'messaging', 'startup.lock');
+  await writeFile(lock, JSON.stringify({ pid: 999999, createdAt: 1 }), { mode: 0o600 });
+  await utimes(lock, new Date(0), new Date(0));
+  const result = await ensureBroker({ agentDir: f.root, binary, port: f.port, startupTimeoutMs: 1000 });
+  assert.equal(result.state, 'started');
+  await assert.rejects(lstat(lock), /ENOENT/);
+});
