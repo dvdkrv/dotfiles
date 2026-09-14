@@ -94,6 +94,7 @@ test('a body published after the reservation high-water waits for the next batch
   releasePublication.resolve(); await sending; releaseFetch.resolve();
   assert.deepEqual(await reserving, []);
   assert.equal(highWaterReads, 1, 'reservation must capture one stream sequence boundary');
+  await new Promise(resolve => setTimeout(resolve, 1100)); // The backend deliberately NAKs post-boundary work for one second.
   const next = await f.b.reserve(); assert.equal(next.length, 1); assert.equal(next[0].envelope.text, 'after boundary');
 });
 
