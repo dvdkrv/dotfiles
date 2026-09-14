@@ -19,7 +19,7 @@ export type BrokerReadiness = 'ready' | 'unavailable';
 
 const unavailablePattern = /ECONNREFUSED|connection refused|TIMEOUT|timed out|no servers available/i;
 const stateNames = ['data', 'server.json', 'broker.log', 'broker-process.json', 'startup.lock'];
-const lifecycleFiles = ['server.json', 'broker.log', 'broker-process.json'];
+const lifecycleFiles = ['server.json', 'broker.log', 'broker-process.json', 'startup.lock'];
 
 function writePrivate(path: string, value: string): void {
   if (existsSync(path)) privatePath(path, false);
@@ -208,15 +208,17 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
       }
       if (readiness === 'ready' && current.initialized) return readyResult(agentDir, 'running', current);
       if (Date.now() - stale.mtimeMs > startupTimeoutMs) {
-        // Reclaim only after an unavailable probe; malformed reachable brokers fail closed.
+        // Reclaim only after an unavailable probe; reachable or malformed brokers keep their owner's lock.
         if (probeError) throw probeError;
-        try {
-          const currentLock = lstatSync(lock);
-          if (currentLock.dev === stale.dev && currentLock.ino === stale.ino) unlinkSync(lock);
-        } catch (inspectionError) {
-          if ((inspectionError as NodeJS.ErrnoException).code !== 'ENOENT') throw inspectionError;
+        if (readiness === 'unavailable') {
+          try {
+            const currentLock = lstatSync(lock);
+            if (currentLock.dev === stale.dev && currentLock.ino === stale.ino) unlinkSync(lock);
+          } catch (inspectionError) {
+            if ((inspectionError as NodeJS.ErrnoException).code !== 'ENOENT') throw inspectionError;
+          }
+          continue;
         }
-        continue;
       }
       if (Date.now() >= deadline) fail('busy', 'Messaging broker startup is already in progress');
       await delay(50);

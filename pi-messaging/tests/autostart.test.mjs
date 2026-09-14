@@ -208,12 +208,14 @@ test('healthy broker rejects group-readable lifecycle paths', { timeout: 30_000 
   const dir = join(f.root, 'messaging');
   await writeFile(join(dir, 'broker.log'), '', { mode: 0o600 });
   await writeFile(join(dir, 'broker-process.json'), '{}\n', { mode: 0o600 });
+  await writeFile(join(dir, 'startup.lock'), '{}\n', { mode: 0o600 });
   const cases = [
     ['messaging root', dir, 0o700, 0o750],
     ['config.json', join(dir, 'config.json'), 0o600, 0o640],
     ['server.json', join(dir, 'server.json'), 0o600, 0o640],
     ['broker.log', join(dir, 'broker.log'), 0o600, 0o640],
     ['broker-process.json', join(dir, 'broker-process.json'), 0o600, 0o640],
+    ['startup.lock', join(dir, 'startup.lock'), 0o600, 0o640],
     ['data', join(dir, 'data'), 0o700, 0o750],
   ];
   for (const [name, path, privateMode, unsafeMode] of cases) await t.test(name, async () => {
@@ -231,12 +233,13 @@ test('healthy broker rejects group-readable lifecycle paths', { timeout: 30_000 
 
 test('healthy broker rejects symlinked lifecycle paths', { timeout: 30_000 }, async t => {
   if (!requireBroker(t)) return;
-  for (const name of ['server.json', 'data']) await t.test(name, async t => {
+  for (const name of ['server.json', 'startup.lock', 'data']) await t.test(name, async t => {
     const f = await isolatedRoot(t);
     const foreground = await runBroker(f.root, binary, f.port);
     t.after(() => foreground.stop());
     const path = join(f.root, 'messaging', name);
     const target = join(f.root, 'messaging', `${name}.target`);
+    if (name === 'startup.lock') await writeFile(path, '{}\n', { mode: 0o600 });
     await rename(path, target);
     await symlink(target, path);
 
@@ -380,6 +383,30 @@ test('a stale private startup lock is reclaimed only after an unavailable probe'
   const result = await ensureBroker({ agentDir: f.root, binary, port: f.port, startupTimeoutMs: 1000 });
   assert.equal(result.state, 'started');
   await assert.rejects(lstat(lock), /ENOENT/);
+});
+
+test('waiter preserves an old owned lock while readiness is ready and uninitialized', { timeout: 15_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t);
+  const foreground = await runBroker(f.root, binary, f.port);
+  t.after(() => foreground.stop());
+  const config = readConfig(f.root);
+  await writeFile(
+    join(f.root, 'messaging', 'config.json'),
+    `${JSON.stringify({ ...config, initialized: false }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  const lock = join(f.root, 'messaging', 'startup.lock');
+  const lockBytes = `${JSON.stringify({ pid: process.pid, createdAt: 1 })}\n`;
+  await writeFile(lock, lockBytes, { mode: 0o600 });
+  await utimes(lock, new Date(0), new Date(0));
+
+  await assert.rejects(
+    ensureBroker({ agentDir: f.root, binary, port: f.port, probeTimeoutMs: 50, startupTimeoutMs: 250 }),
+    /already in progress|busy/i,
+  );
+  assert.equal(await readFile(lock, 'utf8'), lockBytes);
+  assert.equal(readConfig(f.root).initialized, false);
 });
 
 test('readiness stops after child failure and cannot initialize after lock release', { timeout: 15_000 }, async t => {
