@@ -3,7 +3,7 @@ export interface GroupRef { authorityId: string; id: string; label: string }
 export interface Group extends GroupRef { mode: 'paused' | 'armed' | 'exhausted'; round: number; limit: number; used: number }
 export type PeerPresence = 'online' | 'stale' | 'suspended' | 'left';
 export interface Peer { id: string; groupId: string; sessionId: string; displayName: string; active: boolean; suspended: boolean; lastSeen: number }
-export interface ParticipantLease { peerId: string; leaseId: string }
+export interface ParticipantLease { readonly peerId: string; readonly leaseId: string }
 export interface StoredPeer extends Peer { leaseId: string }
 export interface MessageStatus {
   id: string; sequence: number; groupId: string; senderPeerId: string; recipientPeerId: string;

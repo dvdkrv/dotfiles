@@ -13,14 +13,15 @@ function fixture() {
   const b = p.joinPeer(state, group, { sessionId: 'session-b', displayName: 'Bob' });
   return { state, group, a, b };
 }
+function lease(peer) { return { peerId: peer.id, leaseId: peer.leaseId }; }
 function send(f, key = randomUUID(), text = 'hello') {
-  return p.prepareMessage(f.state, f.a.id, { toPeerId: f.b.id, text }, key);
+  return p.prepareMessage(f.state, lease(f.a), { toPeerId: f.b.id, text }, key);
 }
 function addPeer(f, suffix) {
   return p.joinPeer(f.state, f.group, { sessionId: `session-${suffix}`, displayName: `Peer ${suffix}` });
 }
 function sendFrom(f, sender, key = randomUUID(), text = 'hello') {
-  return p.prepareMessage(f.state, sender.id, { toPeerId: f.b.id, text }, key);
+  return p.prepareMessage(f.state, lease(sender), { toPeerId: f.b.id, text }, key);
 }
 
 test('joining cannot grant queue capacity; admissions consume a shared non-refilling budget', () => {
@@ -28,16 +29,16 @@ test('joining cannot grant queue capacity; admissions consume a shared non-refil
   assert.throws(() => send(f), /allowance|capacity/i);
   p.arm(f.state, f.group, 2);
   const first = send(f);
-  const r = p.admit(f.state, f.b.id, first.id);
+  const r = p.admit(f.state, lease(f.b), first.id);
   assert.equal(f.state.groups[f.group.id].used, 1);
-  assert.equal(p.admit(f.state, f.b.id, first.id), null);
+  assert.equal(p.admit(f.state, lease(f.b), first.id), null);
   const second = sendFrom(f, addPeer(f, 'c'));
-  assert.equal(p.admit(f.state, f.b.id, second.id), null, 'unresolved attempt gates recipient');
-  p.observe(f.state, r);
-  assert.ok(p.admit(f.state, f.b.id, second.id));
+  assert.equal(p.admit(f.state, lease(f.b), second.id), null, 'unresolved attempt gates recipient');
+  p.observe(f.state, lease(f.b), r);
+  assert.ok(p.admit(f.state, lease(f.b), second.id));
   assert.equal(f.state.groups[f.group.id].mode, 'exhausted');
   p.arm(f.state, f.group, 12);
-  assert.equal(p.admit(f.state, f.b.id, second.id), null, 'rearming cannot replay attempts');
+  assert.equal(p.admit(f.state, lease(f.b), second.id), null, 'rearming cannot replay attempts');
 });
 
 test('send retries preserve identity after capacity closes while new sender work is bounded', () => {
@@ -69,9 +70,9 @@ test('one sender may have only one unresolved outbound until it becomes terminal
   const first = send(f, 'first');
   assert.throws(() => send(f, 'second'), /sender|unresolved|busy/i);
   p.resolveMessage(f.state, f.group, first.id, 'canceled');
-  const second = send(f, 'second'); const reservation = p.admit(f.state, f.b.id, second.id);
+  const second = send(f, 'second'); const reservation = p.admit(f.state, lease(f.b), second.id);
   assert.throws(() => send(f, 'third'), /sender|unresolved|busy/i);
-  p.observe(f.state, reservation);
+  p.observe(f.state, lease(f.b), reservation);
   assert.ok(send(f, 'third'));
 });
 
@@ -87,7 +88,7 @@ test('atomic batch admission preserves candidate order and spends one credit per
   const f = fixture(); const c = addPeer(f, 'batch-c'); const d = addPeer(f, 'batch-d');
   p.arm(f.state, f.group, 3);
   const messages = [send(f, 'batch-a'), sendFrom(f, c, 'batch-c'), sendFrom(f, d, 'batch-d')];
-  const batch = p.admitBatch(f.state, f.b.id, messages.map(message => message.id));
+  const batch = p.admitBatch(f.state, lease(f.b), messages.map(message => message.id));
   assert.deepEqual(batch.map(reservation => reservation.message.id), messages.map(message => message.id));
   assert.equal(new Set(batch.map(reservation => reservation.attemptId)).size, 3);
   assert.equal(f.state.groups[f.group.id].used, 3);
@@ -101,10 +102,10 @@ test('batch admission validates bounds, skips terminal candidates, and honors re
   const terminal = send(f, 'terminal'); p.resolveMessage(f.state, f.group, terminal.id, 'canceled');
   const first = send(f, 'first'); const second = sendFrom(f, c, 'second'); const third = sendFrom(f, d, 'third');
   f.state.groups[f.group.id].limit = 2; // Simulate a retained pre-upgrade queue that exceeds a later allowance.
-  assert.deepEqual(p.admitBatch(f.state, f.b.id, []).map(r => r.message.id), []);
-  assert.throws(() => p.admitBatch(f.state, f.b.id, Array(9).fill(first.id)), /batch|validation/i);
-  assert.throws(() => p.admitBatch(f.state, f.b.id, [first.id, first.id]), /batch|duplicate|validation/i);
-  const batch = p.admitBatch(f.state, f.b.id, [terminal.id, first.id, second.id, third.id]);
+  assert.deepEqual(p.admitBatch(f.state, lease(f.b), []).map(r => r.message.id), []);
+  assert.throws(() => p.admitBatch(f.state, lease(f.b), Array(9).fill(first.id)), /batch|validation/i);
+  assert.throws(() => p.admitBatch(f.state, lease(f.b), [first.id, first.id]), /batch|duplicate|validation/i);
+  const batch = p.admitBatch(f.state, lease(f.b), [terminal.id, first.id, second.id, third.id]);
   assert.deepEqual(batch.map(r => r.message.id), [first.id, second.id]);
   assert.equal(f.state.messages[third.id].state, 'queued');
   assert.equal(f.state.groups[f.group.id].used, 2);
@@ -113,34 +114,34 @@ test('batch admission validates bounds, skips terminal candidates, and honors re
 test('an existing recipient attempt blocks a new batch and another inbox cannot be admitted', () => {
   const f = fixture(); const c = addPeer(f, 'batch-c'); const otherRecipient = addPeer(f, 'recipient');
   p.arm(f.state, f.group, 3);
-  const attempted = send(f, 'attempted'); const firstReservation = p.admit(f.state, f.b.id, attempted.id); assert.ok(firstReservation);
+  const attempted = send(f, 'attempted'); const firstReservation = p.admit(f.state, lease(f.b), attempted.id); assert.ok(firstReservation);
   const waiting = sendFrom(f, c, 'waiting');
-  assert.deepEqual(p.admitBatch(f.state, f.b.id, [waiting.id]), []);
-  p.observe(f.state, firstReservation);
-  p.observe(f.state, p.admit(f.state, f.b.id, waiting.id));
+  assert.deepEqual(p.admitBatch(f.state, lease(f.b), [waiting.id]), []);
+  p.observe(f.state, lease(f.b), firstReservation);
+  p.observe(f.state, lease(f.b), p.admit(f.state, lease(f.b), waiting.id));
   const sender = addPeer(f, 'other-sender');
-  const other = p.prepareMessage(f.state, sender.id, { toPeerId: otherRecipient.id, text: 'other inbox' }, 'other-inbox');
-  assert.throws(() => p.admitBatch(f.state, f.b.id, [other.id]), /inbox|recipient|corrupt/i);
+  const other = p.prepareMessage(f.state, lease(sender), { toPeerId: otherRecipient.id, text: 'other inbox' }, 'other-inbox');
+  assert.throws(() => p.admitBatch(f.state, lease(f.b), [other.id]), /inbox|recipient|corrupt/i);
 });
 
 test('batch observation validates every supplied correlation before mutating any member', () => {
   const f = fixture(); const c = addPeer(f, 'observe-c'); p.arm(f.state, f.group, 2);
   const messages = [send(f, 'observe-a'), sendFrom(f, c, 'observe-c')];
-  const batch = p.admitBatch(f.state, f.b.id, messages.map(message => message.id));
+  const batch = p.admitBatch(f.state, lease(f.b), messages.map(message => message.id));
   const before = structuredClone(f.state);
-  assert.throws(() => p.observeBatch(f.state, [batch[0], { ...batch[1], attemptId: randomUUID() }]), /receipt/i);
+  assert.throws(() => p.observeBatch(f.state, lease(f.b), [batch[0], { ...batch[1], attemptId: randomUUID() }]), /receipt/i);
   assert.deepEqual(f.state, before);
-  assert.throws(() => p.observeBatch(f.state, [batch[0], batch[0]]), /receipt|duplicate/i);
+  assert.throws(() => p.observeBatch(f.state, lease(f.b), [batch[0], batch[0]]), /receipt|duplicate/i);
   assert.deepEqual(f.state, before);
-  p.observeBatch(f.state, batch);
+  p.observeBatch(f.state, lease(f.b), batch);
   assert.ok(messages.every(message => f.state.messages[message.id].state === 'observed'));
 });
 
 test('batch observation preserves dismissal while recording observation', () => {
   const f = fixture(); p.arm(f.state, f.group, 1);
-  const message = send(f, 'dismissed'); const batch = p.admitBatch(f.state, f.b.id, [message.id]);
+  const message = send(f, 'dismissed'); const batch = p.admitBatch(f.state, lease(f.b), [message.id]);
   p.resolveMessage(f.state, f.group, message.id, 'dismissed');
-  p.observeBatch(f.state, batch);
+  p.observeBatch(f.state, lease(f.b), batch);
   assert.equal(f.state.messages[message.id].state, 'dismissed');
   assert.ok(f.state.messages[message.id].observedAt);
 });
@@ -150,13 +151,13 @@ test('reject invalid bodies, names, groups, cross-group routing, replies, self-s
   for (const text of ['', '   ', '🙂'.repeat(2049)]) assert.throws(() => send(f, randomUUID(), text));
   for (const name of ['../bad', 'x.*', 'Upper', 'a'.repeat(49)]) assert.throws(() => p.createGroup(f.state, name));
   assert.throws(() => p.joinPeer(f.state, f.group, { sessionId: 's', displayName: '\x1b[31mname' }));
-  assert.throws(() => p.prepareMessage(f.state, f.a.id, { toPeerId: f.a.id, text: 'x' }, 'self'));
+  assert.throws(() => p.prepareMessage(f.state, lease(f.a), { toPeerId: f.a.id, text: 'x' }, 'self'));
   const g2 = p.createGroup(f.state, 'other');
   const outsider = p.joinPeer(f.state, g2, { sessionId: 's', displayName: 'Other' });
-  assert.throws(() => p.prepareMessage(f.state, f.a.id, { toPeerId: outsider.id, text: 'x' }, 'cross'));
-  assert.throws(() => p.prepareMessage(f.state, f.a.id, { toPeerId: f.b.id, text: 'x', inReplyTo: randomUUID() }, 'reply'));
-  p.leavePeer(f.state, f.a.id);
-  assert.throws(() => send(f), /active/i);
+  assert.throws(() => p.prepareMessage(f.state, lease(f.a), { toPeerId: outsider.id, text: 'x' }, 'cross'));
+  assert.throws(() => p.prepareMessage(f.state, lease(f.a), { toPeerId: f.b.id, text: 'x', inReplyTo: randomUUID() }, 'reply'));
+  p.leavePeer(f.state, lease(f.a));
+  assert.throws(() => send(f), /active|lease|participation/i);
 });
 
 test('membership and retained-group bounds reject overflow without changing existing state', () => {
@@ -174,17 +175,17 @@ test('membership and retained-group bounds reject overflow without changing exis
 
 test('pause, dismissal, and revocation cannot refund or replay; forged receipts fail', () => {
   const f = fixture(); p.arm(f.state, f.group, 3);
-  const first = send(f); const r = p.admit(f.state, f.b.id, first.id);
-  assert.throws(() => p.observe(f.state, { ...r, attemptId: randomUUID() }), /receipt/i);
+  const first = send(f); const r = p.admit(f.state, lease(f.b), first.id);
+  assert.throws(() => p.observe(f.state, lease(f.b), { ...r, attemptId: randomUUID() }), /receipt/i);
   p.pause(f.state, f.group);
   p.resolveMessage(f.state, f.group, first.id, 'dismissed');
-  p.observe(f.state, r);
+  p.observe(f.state, lease(f.b), r);
   assert.equal(f.state.messages[first.id].state, 'dismissed');
   assert.ok(f.state.messages[first.id].observedAt);
   assert.equal(f.state.groups[f.group.id].used, 1);
-  const next = send(f); assert.equal(p.admit(f.state, f.b.id, next.id), null);
-  p.arm(f.state, f.group, 1); p.leavePeer(f.state, f.b.id);
-  assert.equal(p.admit(f.state, f.b.id, next.id), null);
+  const next = send(f); assert.equal(p.admit(f.state, lease(f.b), next.id), null);
+  p.arm(f.state, f.group, 1); const departedLease = lease(f.b); p.leavePeer(f.state, departedLease);
+  assert.throws(() => p.admit(f.state, departedLease, next.id), /participation|lease/i);
 });
 
 test('pruning preserves unresolved work and live-sender deduplication', () => {
@@ -192,9 +193,158 @@ test('pruning preserves unresolved work and live-sender deduplication', () => {
   const canceled = send(f); p.resolveMessage(f.state, f.group, canceled.id, 'canceled');
   const queued = send(f);
   assert.deepEqual(p.prunable(f.state, f.group, Infinity), []);
-  p.leavePeer(f.state, f.a.id);
+  p.leavePeer(f.state, lease(f.a));
   assert.deepEqual(p.prunable(f.state, f.group, Infinity), [canceled.id]);
   assert.equal(f.state.messages[queued.id].state, 'queued');
+});
+
+test('lease rotation fences every old participant mutation after suspended recipient resume', () => {
+  const f = fixture(); const senderLease = lease(f.a); const oldLease = lease(f.b);
+  p.arm(f.state, f.group, 3);
+  const first = send(f, 'before-suspend');
+  p.suspendPeer(f.state, oldLease);
+  assert.equal(f.state.peers[f.b.id].active, true);
+  assert.equal(f.state.peers[f.b.id].suspended, true);
+  assert.notEqual(f.state.peers[f.b.id].leaseId, oldLease.leaseId);
+  const second = sendFrom(f, addPeer(f, 'while-suspended'), 'while-suspended');
+  const third = sendFrom(f, addPeer(f, 'also-suspended'), 'also-suspended');
+  const original = { id: f.b.id, sessionId: f.b.sessionId, displayName: f.b.displayName };
+  const resumed = p.resumePeer(f.state, f.group, original.sessionId, original.id, 100_000);
+  const resumedLease = p.leaseOf(resumed);
+  assert.deepEqual({ id: resumed.id, sessionId: resumed.sessionId, displayName: resumed.displayName }, original);
+  assert.notEqual(resumedLease.leaseId, oldLease.leaseId);
+  assert.deepEqual(p.leaseOf(resumed), resumedLease);
+
+  const beforeAdmission = structuredClone(f.state);
+  assert.throws(() => p.admitBatch(f.state, oldLease, [first.id, second.id, third.id]), /participation|lease/i);
+  assert.deepEqual(f.state, beforeAdmission, 'old-lease admission must spend no credit and mutate no message');
+  const batch = p.admitBatch(f.state, resumedLease, [second.id, first.id, third.id]);
+  assert.deepEqual(batch.map(item => item.message.id), [second.id, first.id, third.id]);
+  assert.equal(f.state.groups[f.group.id].used, 3);
+
+  const beforeOldOwner = structuredClone(f.state);
+  for (const operation of [
+    () => p.heartbeat(f.state, oldLease),
+    () => p.heartbeat(f.state, oldLease, 'Hijacked Name'),
+    () => p.prepareMessage(f.state, oldLease, { toPeerId: f.a.id, text: 'stale send' }, 'stale-send'),
+    () => p.canReceive(f.state, oldLease),
+    () => p.observeBatch(f.state, oldLease, batch),
+    () => p.suspendPeer(f.state, oldLease),
+    () => p.leavePeer(f.state, oldLease),
+  ]) assert.throws(operation, /participation|lease/i);
+  assert.deepEqual(f.state, beforeOldOwner, 'the old owner must mutate no participant or receipt state');
+  assert.deepEqual(p.requireLease(f.state, resumedLease), resumed);
+  p.observeBatch(f.state, resumedLease, batch);
+  assert.ok(batch.every(item => f.state.messages[item.message.id].state === 'observed'));
+  assert.equal(f.state.peers[f.b.id].displayName, original.displayName);
+  assert.deepEqual(senderLease, lease(f.a));
+});
+
+test('resume validates lifecycle attribution and serializes concurrent logical resumers', () => {
+  const state = p.newLedger(randomUUID()); const group = p.createGroup(state, 'resume');
+  const otherGroup = p.createGroup(state, 'resume-other');
+  const peer = p.joinPeer(state, group, { sessionId: 'saved-session', displayName: 'Resumable' }, 70_000);
+  const counters = structuredClone(state.groups);
+  const beforeRejected = structuredClone(state);
+  assert.throws(() => p.resumePeer(state, group, peer.sessionId, peer.id, 100_000), /online|participation/i, 'exactly 30 seconds remains online');
+  assert.throws(() => p.resumePeer(state, group, 'wrong-session', peer.id, 100_001), /session|group|participation/i);
+  assert.throws(() => p.resumePeer(state, otherGroup, peer.sessionId, peer.id, 100_001), /session|group|participation/i);
+  assert.throws(() => p.resumePeer(state, group, peer.sessionId, randomUUID(), 100_001), /session|group|peer|participation/i);
+  assert.deepEqual(state, beforeRejected);
+
+  const resumed = p.resumePeer(state, group, peer.sessionId, peer.id, 100_001);
+  const firstWinnerLease = p.leaseOf(resumed);
+  assert.equal(resumed.lastSeen, 100_001);
+  assert.throws(() => p.resumePeer(state, group, peer.sessionId, peer.id, 100_001), /online|participation/i);
+  assert.deepEqual(p.leaseOf(state.peers[peer.id]), firstWinnerLease, 'a second logical resumer cannot rotate the winner lease');
+  p.suspendPeer(state, firstWinnerLease);
+  const resumedFromSuspension = p.resumePeer(state, group, peer.sessionId, peer.id, 100_001);
+  assert.equal(resumedFromSuspension.suspended, false);
+  const finalLease = p.leaseOf(resumedFromSuspension);
+  p.leavePeer(state, finalLease);
+  const beforeInactiveResume = structuredClone(state);
+  assert.throws(() => p.resumePeer(state, group, peer.sessionId, peer.id, 200_000), /left|active|participation/i);
+  assert.deepEqual(state, beforeInactiveResume);
+  assert.deepEqual(state.groups, counters, 'resume/suspend/leave must not alter group counters');
+});
+
+test('suspended peers retain active slots and revoke finalizes only a group-attributed peer', () => {
+  const f = fixture();
+  for (let index = 2; index < 16; index++) addPeer(f, `slot-${index}`);
+  const oldLease = lease(f.b); p.suspendPeer(f.state, oldLease);
+  assert.equal(Object.values(f.state.peers).filter(peer => peer.groupId === f.group.id && peer.active).length, 16);
+  assert.throws(() => addPeer(f, 'overflow'), /full/i);
+  const resumed = p.resumePeer(f.state, f.group, f.b.sessionId, f.b.id, f.b.lastSeen);
+  assert.equal(Object.values(f.state.peers).filter(peer => peer.groupId === f.group.id && peer.active).length, 16);
+
+  const other = p.createGroup(f.state, 'revoke-other'); const beforeWrongGroup = structuredClone(f.state);
+  assert.throws(() => p.revokePeer(f.state, other, resumed.id), /group|missing/i);
+  assert.deepEqual(f.state, beforeWrongGroup);
+  const currentLease = p.leaseOf(resumed); p.revokePeer(f.state, f.group, resumed.id);
+  assert.equal(resumed.active, false); assert.equal(resumed.suspended, false);
+  assert.notEqual(resumed.leaseId, currentLease.leaseId);
+  assert.throws(() => p.requireLease(f.state, currentLease), /participation|lease/i);
+});
+
+test('batch admission remains blocked without refund when an attempted recipient resumes', () => {
+  const f = fixture(); const waitingSender = addPeer(f, 'waiting'); p.arm(f.state, f.group, 3);
+  const attempted = send(f, 'attempted-before-resume');
+  const reservation = p.admit(f.state, lease(f.b), attempted.id); assert.ok(reservation);
+  const waiting = sendFrom(f, waitingSender, 'queued-before-resume');
+  const oldLease = lease(f.b); p.suspendPeer(f.state, oldLease);
+  const resumed = p.resumePeer(f.state, f.group, f.b.sessionId, f.b.id, f.b.lastSeen);
+  const before = structuredClone(f.state);
+  assert.deepEqual(p.admitBatch(f.state, p.leaseOf(resumed), [waiting.id]), []);
+  assert.deepEqual(f.state, before);
+  assert.equal(f.state.messages[attempted.id].state, 'attempted');
+  assert.equal(f.state.messages[attempted.id].attemptId, reservation.attemptId);
+  assert.equal(f.state.groups[f.group.id].used, 1);
+});
+
+test('active stale and suspended recipients remain routable with exact queued-capacity reservation', () => {
+  const f = fixture(); p.arm(f.state, f.group, 8);
+  f.state.peers[f.b.id].lastSeen = 0;
+  assert.equal(p.peerPresence(f.b, 30_001), 'stale');
+  const senders = [f.a, ...Array.from({ length: 8 }, (_, index) => addPeer(f, `route-${index}`))];
+  assert.ok(sendFrom(f, senders[0], 'stale-recipient'));
+  p.suspendPeer(f.state, lease(f.b));
+  for (let index = 1; index < 8; index++) assert.ok(sendFrom(f, senders[index], `suspended-recipient-${index}`));
+  const before = structuredClone(f.state);
+  assert.throws(() => sendFrom(f, senders[8], 'capacity-overflow'), /allowance|capacity|eight|full/i);
+  assert.deepEqual(f.state, before);
+  assert.equal(Object.values(f.state.messages).filter(message => message.recipientPeerId === f.b.id && message.state === 'queued').length, 8);
+  assert.equal(f.state.groups[f.group.id].used, 0);
+});
+
+test('bare peer IDs never bypass exact lease authorization', () => {
+  const f = fixture(); const before = structuredClone(f.state);
+  for (const operation of [
+    () => p.requireLease(f.state, f.a.id),
+    () => p.heartbeat(f.state, f.a.id),
+    () => p.prepareMessage(f.state, f.a.id, { toPeerId: f.b.id, text: 'bare send' }, 'bare-send'),
+    () => p.canReceive(f.state, f.b.id),
+    () => p.admitBatch(f.state, f.b.id, []),
+    () => p.admit(f.state, f.b.id, randomUUID()),
+    () => p.observeBatch(f.state, f.b.id, []),
+    () => p.observeBatch(f.state, []),
+    () => p.observe(f.state, f.b.id, {}),
+    () => p.suspendPeer(f.state, f.a.id),
+    () => p.leavePeer(f.state, f.a.id),
+  ]) assert.throws(operation, /participation|lease/i);
+  assert.deepEqual(f.state, before);
+});
+
+test('shared lifecycle timestamps reject non-finite values before mutation', () => {
+  const state = p.newLedger(randomUUID()); const group = p.createGroup(state, 'timestamps');
+  for (const now of [NaN, Infinity, -Infinity]) {
+    const before = structuredClone(state);
+    assert.throws(() => p.joinPeer(state, group, { sessionId: `invalid-${String(now)}`, displayName: 'Invalid Time' }, now), /validation|timestamp|time/i);
+    assert.deepEqual(state, before);
+  }
+  const peer = p.joinPeer(state, group, { sessionId: 'valid-time', displayName: 'Valid Time' }, 0);
+  const beforeResume = structuredClone(state);
+  assert.throws(() => p.resumePeer(state, group, peer.sessionId, peer.id, NaN), /validation|timestamp|time/i);
+  assert.deepEqual(state, beforeResume);
 });
 
 test('v1 ledger migration preserves every authoritative field and adds private leases', () => {

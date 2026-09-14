@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { MessagingError, type Envelope, type Group, type GroupRef, type GroupSummary, type MessageStatus, type Peer, type PeerPresence, type Reservation, type SendInput, type StoredPeer } from './contracts.ts';
+import { MessagingError, type Envelope, type Group, type GroupRef, type GroupSummary, type MessageStatus, type ParticipantLease, type Peer, type PeerPresence, type Reservation, type SendInput, type StoredPeer } from './contracts.ts';
 
 export interface Ledger { version: 2; authorityId: string; sequence: number; groups: Record<string, Group>; peers: Record<string, StoredPeer>; messages: Record<string, MessageStatus> }
 interface LegacyPeer { id: string; groupId: string; sessionId: string; displayName: string; active: boolean; lastSeen: number }
@@ -35,6 +35,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function hasFields(value: Record<string, unknown>, fields: readonly string[]): boolean { return fields.every(field => Object.hasOwn(value, field)); }
 function isNonnegativeInteger(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0; }
 function isFiniteNumber(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value); }
+function lifecycleTime(value: number): number {
+  if (!isFiniteNumber(value)) fail('validation', 'Invalid lifecycle timestamp');
+  return value;
+}
 function validateLedgerVersion(value: unknown, authorityId: string, version: 1): asserts value is LegacyLedger;
 function validateLedgerVersion(value: unknown, authorityId: string, version: 2): asserts value is Ledger;
 function validateLedgerVersion(value: unknown, authorityId: string, version: 1 | 2): void {
@@ -82,6 +86,7 @@ export function publicPeer(peer: StoredPeer): Peer {
   return { id: peer.id, groupId: peer.groupId, sessionId: peer.sessionId, displayName: peer.displayName, active: peer.active, suspended: peer.suspended, lastSeen: peer.lastSeen };
 }
 export function peerPresence(peer: Peer, now = Date.now()): PeerPresence {
+  lifecycleTime(now);
   if (!peer.active) return 'left';
   if (peer.suspended) return 'suspended';
   return now - peer.lastSeen <= ONLINE_WINDOW_MS ? 'online' : 'stale';
@@ -97,6 +102,16 @@ export function activePeer(s: Ledger, id: string): StoredPeer {
   if (!peer?.active) fail('participation', 'Peer is not active; explicitly join again');
   return peer;
 }
+export function leaseOf(peer: StoredPeer): ParticipantLease { return { peerId: peer.id, leaseId: peer.leaseId }; }
+function authorizeLease(s: Ledger, value: unknown): StoredPeer {
+  if (!value || typeof value !== 'object' || !Object.hasOwn(value, 'peerId') || !Object.hasOwn(value, 'leaseId')) fail('participation', 'A current peer lease is required');
+  const lease = value as Record<string, unknown>;
+  if (typeof lease.peerId !== 'string' || typeof lease.leaseId !== 'string' || !uuid.test(lease.peerId) || !uuid.test(lease.leaseId)) fail('participation', 'A current peer lease is required');
+  const peer = Object.hasOwn(s.peers, lease.peerId) ? s.peers[lease.peerId] : undefined;
+  if (!peer?.active || peer.suspended || peer.leaseId !== lease.leaseId) fail('participation', 'Peer lease is no longer current; explicitly resume or join again');
+  return peer;
+}
+export function requireLease(s: Ledger, lease: ParticipantLease): StoredPeer { return authorizeLease(s, lease); }
 export function refOf(g: Group): GroupRef { return { authorityId: g.authorityId, id: g.id, label: g.label }; }
 export function createGroup(s: Ledger, label: string): GroupRef {
   if (!/^[a-z][a-z0-9-]{0,47}$/.test(label)) fail('validation', 'Group label must be 1–48 lowercase letters/digits/hyphens, starting with a letter');
@@ -107,14 +122,43 @@ export function createGroup(s: Ledger, label: string): GroupRef {
   s.groups[g.id] = g; return refOf(g);
 }
 export function joinPeer(s: Ledger, ref: GroupRef, info: { sessionId: string; displayName: string }, now = Date.now()): StoredPeer {
-  const group = groupOf(s, ref);
+  const group = groupOf(s, ref); const joinedAt = lifecycleTime(now);
   if (Object.keys(s.peers).length >= 512 || Object.values(s.peers).filter(p => p.groupId === group.id && p.active).length >= 16) fail('full', 'Peer store full; leave/revoke and prune old peers');
   if (!info.sessionId || info.sessionId.length > 256) fail('validation', 'Invalid session ID');
-  const peer: StoredPeer = { id: randomUUID(), groupId: group.id, sessionId: info.sessionId, displayName: validateDisplayName(info.displayName), active: true, suspended: false, lastSeen: now, leaseId: randomUUID() };
+  const peer: StoredPeer = { id: randomUUID(), groupId: group.id, sessionId: info.sessionId, displayName: validateDisplayName(info.displayName), active: true, suspended: false, lastSeen: joinedAt, leaseId: randomUUID() };
   s.peers[peer.id] = peer; return peer;
 }
-export function leavePeer(s: Ledger, id: string): void { if (Object.hasOwn(s.peers, id)) s.peers[id].active = false; }
-export function heartbeat(s: Ledger, id: string, displayName?: string): void { const peer = activePeer(s, id); peer.lastSeen = Date.now(); if (displayName !== undefined) peer.displayName = validateDisplayName(displayName); }
+export function resumePeer(s: Ledger, ref: GroupRef, sessionId: string, peerId: string, now = Date.now()): StoredPeer {
+  const resumedAt = lifecycleTime(now); const group = groupOf(s, ref);
+  const peer = Object.hasOwn(s.peers, peerId) ? s.peers[peerId] : undefined;
+  if (!peer || peer.groupId !== group.id || peer.sessionId !== sessionId) fail('participation', 'Peer does not belong to this session and group');
+  if (!peer.active) fail('participation', 'Peer was explicitly left or revoked');
+  if (peerPresence(peer, resumedAt) === 'online') fail('participation', 'Matching messaging peer is still online; return to it or explicitly revoke it');
+  const nextLeaseId = randomUUID(); peer.suspended = false; peer.leaseId = nextLeaseId; peer.lastSeen = resumedAt; return peer;
+}
+export function suspendPeer(s: Ledger, lease: ParticipantLease): void {
+  const peer = requireLease(s, lease); const nextLeaseId = randomUUID();
+  peer.suspended = true; peer.leaseId = nextLeaseId;
+}
+export function leavePeer(s: Ledger, lease: ParticipantLease): void;
+/** @deprecated Transitional compile fence for the pre-Task 3 backend; bare IDs always fail authorization. */
+export function leavePeer(s: Ledger, lease: string): void;
+export function leavePeer(s: Ledger, lease: ParticipantLease | string): void {
+  const peer = authorizeLease(s, lease); const nextLeaseId = randomUUID();
+  peer.active = false; peer.suspended = false; peer.leaseId = nextLeaseId;
+}
+export function revokePeer(s: Ledger, ref: GroupRef, peerId: string): void {
+  const group = groupOf(s, ref); const peer = Object.hasOwn(s.peers, peerId) ? s.peers[peerId] : undefined;
+  if (!peer || peer.groupId !== group.id) fail('missing', 'Peer not in group');
+  const nextLeaseId = randomUUID(); peer.active = false; peer.suspended = false; peer.leaseId = nextLeaseId;
+}
+export function heartbeat(s: Ledger, lease: ParticipantLease, displayName?: string): void;
+/** @deprecated Transitional compile fence for the pre-Task 3 backend; bare IDs always fail authorization. */
+export function heartbeat(s: Ledger, lease: string, displayName?: string): void;
+export function heartbeat(s: Ledger, lease: ParticipantLease | string, displayName?: string): void {
+  const peer = authorizeLease(s, lease); const nextName = displayName === undefined ? undefined : validateDisplayName(displayName);
+  peer.lastSeen = Date.now(); if (nextName !== undefined) peer.displayName = nextName;
+}
 export function arm(s: Ledger, ref: GroupRef, limit: number): void {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail('validation', 'Allowance must be an integer from 1 to 100');
   const g = groupOf(s, ref);
@@ -123,11 +167,14 @@ export function arm(s: Ledger, ref: GroupRef, limit: number): void {
   g.round++; g.limit = limit; g.used = 0; g.mode = 'armed';
 }
 export function pause(s: Ledger, ref: GroupRef): void { groupOf(s, ref).mode = 'paused'; }
-export function prepareMessage(s: Ledger, peerId: string, input: SendInput, requestKey: string): MessageStatus {
-  const sender = activePeer(s, peerId); validateInput(input);
+export function prepareMessage(s: Ledger, senderLease: ParticipantLease, input: SendInput, requestKey: string): MessageStatus;
+/** @deprecated Transitional compile fence for the pre-Task 3 backend; bare IDs always fail authorization. */
+export function prepareMessage(s: Ledger, senderLease: string, input: SendInput, requestKey: string): MessageStatus;
+export function prepareMessage(s: Ledger, senderLease: ParticipantLease | string, input: SendInput, requestKey: string): MessageStatus {
+  const sender = authorizeLease(s, senderLease); validateInput(input);
   if (!requestKey || requestKey.length > 512) fail('validation', 'Invalid request key');
   const hash = payloadHash(input);
-  const existing = Object.values(s.messages).find(m => m.senderPeerId === peerId && m.requestKey === requestKey);
+  const existing = Object.values(s.messages).find(m => m.senderPeerId === sender.id && m.requestKey === requestKey);
   if (existing) { if (existing.hash !== hash) fail('conflict', 'Send idempotency conflict'); return existing; }
   const recipient = activePeer(s, input.toPeerId);
   if (sender.id === recipient.id || sender.groupId !== recipient.groupId) fail('validation', 'Recipient must be another peer in the same group');
@@ -142,41 +189,51 @@ export function prepareMessage(s: Ledger, peerId: string, input: SendInput, requ
   const m: MessageStatus = { id: randomUUID(), sequence: ++s.sequence, groupId: sender.groupId, senderPeerId: sender.id, recipientPeerId: recipient.id, senderName: sender.displayName, requestKey, hash, createdAt: Date.now(), state: 'queued', ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}) };
   s.messages[m.id] = m; return m;
 }
-export function canReceive(s: Ledger, peerId: string): boolean {
-  const p = Object.hasOwn(s.peers, peerId) ? s.peers[peerId] : undefined;
-  if (!p?.active) return false;
-  const g = s.groups[p.groupId];
-  return g.mode === 'armed' && g.used < g.limit && !Object.values(s.messages).some(m => m.recipientPeerId === peerId && m.state === 'attempted');
+export function canReceive(s: Ledger, recipientLease: ParticipantLease): boolean;
+/** @deprecated Transitional compile fence for the pre-Task 3 backend; bare IDs always fail authorization. */
+export function canReceive(s: Ledger, recipientLease: string): boolean;
+export function canReceive(s: Ledger, recipientLease: ParticipantLease | string): boolean {
+  const peer = authorizeLease(s, recipientLease); const group = s.groups[peer.groupId];
+  return group.mode === 'armed' && group.used < group.limit && !Object.values(s.messages).some(m => m.recipientPeerId === peer.id && m.state === 'attempted');
 }
-export function admitBatch(s: Ledger, peerId: string, messageIds: readonly string[]): Reservation[] {
+export function admitBatch(s: Ledger, recipientLease: ParticipantLease, messageIds: readonly string[]): Reservation[];
+/** @deprecated Transitional compile fence for the pre-Task 3 backend; bare IDs always fail authorization. */
+export function admitBatch(s: Ledger, recipientLease: string, messageIds: readonly string[]): Reservation[];
+export function admitBatch(s: Ledger, recipientLease: ParticipantLease | string, messageIds: readonly string[]): Reservation[] {
+  const peer = authorizeLease(s, recipientLease);
   if (messageIds.length === 0) return [];
   if (messageIds.length > MAX_QUEUED_PER_RECIPIENT || new Set(messageIds).size !== messageIds.length) fail('validation', 'Invalid messaging batch');
-  if (!canReceive(s, peerId)) return [];
-  const peer = activePeer(s, peerId);
   const group = s.groups[peer.groupId];
+  if (group.mode !== 'armed' || group.used >= group.limit || Object.values(s.messages).some(m => m.recipientPeerId === peer.id && m.state === 'attempted')) return [];
   const selected: MessageStatus[] = [];
   for (const id of messageIds) {
     const message = Object.hasOwn(s.messages, id) ? s.messages[id] : undefined;
     if (!message || message.state !== 'queued') continue;
-    if (message.recipientPeerId !== peerId || message.groupId !== group.id) fail('corrupt', 'Batch candidate belongs to another inbox');
+    if (message.recipientPeerId !== peer.id || message.groupId !== group.id) fail('corrupt', 'Batch candidate belongs to another inbox');
     if (selected.length < group.limit - group.used) selected.push(message);
   }
   const now = Date.now();
   return selected.map(message => {
     message.state = 'attempted'; message.attemptId = randomUUID(); message.attemptRound = group.round; message.attemptedAt = now;
     if (++group.used === group.limit) group.mode = 'exhausted';
-    return { group: refOf(group), peerId, message: { ...message }, attemptId: message.attemptId, round: group.round };
+    return { group: refOf(group), peerId: peer.id, message: { ...message }, attemptId: message.attemptId, round: group.round };
   });
 }
-export function admit(s: Ledger, peerId: string, messageId: string): Reservation | null { return admitBatch(s, peerId, [messageId])[0] ?? null; }
-export function observeBatch(s: Ledger, reservations: readonly Reservation[]): void {
+export function admit(s: Ledger, recipientLease: ParticipantLease, messageId: string): Reservation | null { return admitBatch(s, recipientLease, [messageId])[0] ?? null; }
+export function observeBatch(s: Ledger, recipientLease: ParticipantLease, reservations: readonly Reservation[]): void;
+/** @deprecated Transitional compile fence for the pre-Task 3 backend; the old arity always fails authorization. */
+export function observeBatch(s: Ledger, reservations: readonly Reservation[]): void;
+export function observeBatch(s: Ledger, recipientLease: ParticipantLease | readonly Reservation[], reservations?: readonly Reservation[]): void {
+  const peer = authorizeLease(s, recipientLease);
+  if (!reservations) fail('participation', 'A current peer lease is required');
   if (reservations.length === 0 || reservations.length > MAX_QUEUED_PER_RECIPIENT) fail('receipt', 'Invalid receipt batch');
   const ids = reservations.map(reservation => reservation.message.id);
   if (new Set(ids).size !== ids.length) fail('receipt', 'Duplicate receipt correlation');
   const first = reservations[0];
-  groupOf(s, first.group);
+  const group = groupOf(s, first.group);
+  if (peer.groupId !== group.id || first.peerId !== peer.id) fail('receipt', 'Receipt does not belong to this participant');
   const messages = reservations.map(reservation => {
-    if (reservation.peerId !== first.peerId || reservation.group.id !== first.group.id || reservation.group.authorityId !== first.group.authorityId) fail('receipt', 'Mixed receipt batch');
+    if (reservation.peerId !== peer.id || reservation.group.id !== first.group.id || reservation.group.authorityId !== first.group.authorityId) fail('receipt', 'Mixed receipt batch');
     const message = Object.hasOwn(s.messages, reservation.message.id) ? s.messages[reservation.message.id] : undefined;
     if (!message || message.groupId !== reservation.group.id || message.recipientPeerId !== reservation.peerId || message.attemptId !== reservation.attemptId || message.attemptRound !== reservation.round || !['attempted', 'observed', 'dismissed'].includes(message.state)) fail('receipt', 'Invalid receipt correlation');
     return message;
@@ -187,7 +244,7 @@ export function observeBatch(s: Ledger, reservations: readonly Reservation[]): v
     if (message.state === 'attempted') { message.state = 'observed'; message.terminalAt = now; }
   }
 }
-export function observe(s: Ledger, reservation: Reservation): void { observeBatch(s, [reservation]); }
+export function observe(s: Ledger, recipientLease: ParticipantLease, reservation: Reservation): void { observeBatch(s, recipientLease, [reservation]); }
 export function resolveMessage(s: Ledger, ref: GroupRef, id: string, state: 'canceled' | 'dismissed'): void {
   groupOf(s, ref); const m = Object.hasOwn(s.messages, id) ? s.messages[id] : undefined;
   if (!m || m.groupId !== ref.id || (state === 'canceled' ? m.state !== 'queued' : state !== 'dismissed' || m.state !== 'attempted')) fail('validation', 'Message is not eligible for that recovery action');
