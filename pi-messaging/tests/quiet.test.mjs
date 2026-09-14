@@ -55,7 +55,7 @@ async function fixture(t, holdAdmission = false) {
   const settingsManager = SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false }, enableInstallTelemetry: false });
   const loader = new DefaultResourceLoader({ cwd: broker.root, agentDir: broker.root, settingsManager,
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-    extensionFactories: [pi => registerMessaging(pi, async () => receiver)] });
+    extensionFactories: [pi => registerMessaging(pi, async () => receiver, async () => {})] });
   await loader.reload();
   const created = await createAgentSession({ cwd: broker.root, agentDir: broker.root, modelRuntime, model, thinkingLevel: 'off',
     tools: ['work', 'peer_message'], resourceLoader: loader, settingsManager, sessionManager: SessionManager.create(broker.root, join(broker.root, 'sessions')),

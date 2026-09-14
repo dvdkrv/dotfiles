@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, connect as tcpConnect } from 'node:net';
+import { fork } from 'node:child_process';
 import { once } from 'node:events';
 import { connect } from '@nats-io/transport-node';
 import { jetstreamManager, AckPolicy, DeliverPolicy } from '@nats-io/jetstream';
@@ -10,6 +11,16 @@ import { brokerFixture } from './helpers/broker.mjs';
 const { connectBackend } = await createJiti(import.meta.url).import('../src/nats-backend.ts');
 const consumerName = id => `peer_${id.replaceAll('-', '')}`;
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
+function contenderRequest(child, message, timeoutMs = 5000) {
+  const requestId = `${process.pid}-${Date.now()}-${Math.random()}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { cleanup(); reject(new Error(`Contender timeout for ${message.action}`)); }, timeoutMs);
+    const onExit = (code, signal) => { cleanup(); reject(new Error(`Contender exited (${code ?? signal}) during ${message.action}`)); };
+    const onMessage = response => { if (response?.requestId !== requestId) return; cleanup(); resolve(response); };
+    const cleanup = () => { clearTimeout(timer); child.off('exit', onExit); child.off('message', onMessage); };
+    child.on('exit', onExit); child.on('message', onMessage); child.send({ ...message, requestId });
+  });
+}
 async function fixture(t) {
   const f = await brokerFixture(t); if (!f) return null;
   const a = await connectBackend(f.config, { initialize: true }); t.after(() => a.close());
@@ -129,6 +140,77 @@ test('leave during join invalidates the new identity before a consumer can activ
   assert.equal(f.b.peer, undefined);
   assert.equal((await f.b.peers(f.g)).some(p => p.displayName === 'Late' && p.active), false);
   assert.equal((await f.jsm.streams.info('PM_MESSAGES')).state.consumer_count, 1);
+});
+
+test('rotated lease fences every old process mutation without deactivating the resumed peer', { timeout: 20000 }, async t => {
+  const f = await fixture(t); if (!f) return;
+  const child = fork(new URL('./helpers/lease-contender.mjs', import.meta.url), { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  t.after(async () => {
+    if (child.connected) await contenderRequest(child, { action: 'close' }, 2000).catch(() => {});
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+  });
+  const initialized = await contenderRequest(child, { action: 'init', config: f.config, group: f.g, sessionId: 'old-child', displayName: 'Old Child' });
+  assert.equal(initialized.ok, true); const old = initialized.value;
+  assert.equal(Object.hasOwn(old, 'leaseId'), false);
+  await f.a.arm(f.g, 2);
+  const attempted = await f.a.send({ toPeerId: old.id, text: 'attempted before rotation' }, 'before-rotation');
+  assert.deepEqual((await contenderRequest(child, { action: 'reserve' })).value.messageIds, [attempted.id]);
+
+  const kv = await new Kvm(f.nc).open('PM_CONTROL'); const entry = await kv.get('state'); const state = entry.json();
+  state.peers[old.id].lastSeen = Date.now() - 31_000; await kv.update('state', JSON.stringify(state), entry.revision);
+  const winner = await connectBackend(f.config); t.after(() => winner.close());
+  await winner.resume(f.g, old.id, old.sessionId);
+
+  for (const action of ['heartbeat', 'rename', 'send', 'reserve', 'observe', 'suspend', 'leave']) {
+    const response = await contenderRequest(child, { action, toPeerId: f.a.peer.id });
+    assert.equal(response.ok, false, `${action} unexpectedly succeeded`);
+    assert.equal(response.code, 'participation', `${action} did not fail on its stale lease`);
+  }
+  await winner.heartbeat();
+  const peer = (await f.a.peers(f.g)).find(candidate => candidate.id === old.id);
+  assert.equal(peer.active, true); assert.equal(peer.suspended, false); assert.equal(peer.displayName, old.displayName);
+  assert.equal((await f.a.listMessages(f.g)).some(message => message.requestKey === 'old-process-send'), false);
+  assert.equal((await f.a.getGroupSummary(f.g)).used, 1);
+});
+
+test('held batch pull under a rotated lease is not acknowledged and redelivers in order', { timeout: 20000 }, async t => {
+  const f = await fixture(t); if (!f) return;
+  const senders = [f.a];
+  for (let index = 1; index < 3; index++) {
+    const sender = await connectBackend(f.config); t.after(() => sender.close());
+    await sender.join(f.g, { sessionId: `held-sender-${index}`, displayName: `Held Sender ${index}` }); senders.push(sender);
+  }
+  await f.a.arm(f.g, 3);
+  const sent = [];
+  for (let index = 0; index < senders.length; index++) {
+    sent.push(await senders[index].send({ toPeerId: f.b.peer.id, text: `held-${index}` }, `held-${index}`));
+  }
+
+  const originalSnapshot = f.b.snapshot.bind(f.b); let reads = 0;
+  const blocked = deferred(); const atAdmission = deferred(); t.after(() => blocked.resolve());
+  f.b.snapshot = async () => {
+    const snapshot = await originalSnapshot();
+    if (++reads === 2) { atAdmission.resolve(); await blocked.promise; }
+    return snapshot;
+  };
+  const pulling = f.b.reserve(); await atAdmission.promise;
+  const before = await f.jsm.consumers.info('PM_MESSAGES', consumerName(f.b.peer.id));
+  assert.equal(before.ack_floor.stream_seq, 0, 'held messages must not be acknowledged before admission');
+
+  const kv = await new Kvm(f.nc).open('PM_CONTROL'); const entry = await kv.get('state'); const state = entry.json();
+  state.peers[f.b.peer.id].lastSeen = Date.now() - 31_000; await kv.update('state', JSON.stringify(state), entry.revision);
+  const winner = await connectBackend(f.config); t.after(() => winner.close());
+  await winner.resume(f.g, f.b.peer.id, f.b.peer.sessionId);
+  blocked.resolve(); await assert.rejects(pulling, /lease|current|resume/i);
+  assert.equal((await f.a.getGroupSummary(f.g)).used, 0);
+  assert.deepEqual((await f.a.listMessages(f.g)).sort((a, b) => a.sequence - b.sequence).map(message => [message.id, message.state]), sent.map(message => [message.id, 'queued']));
+  assert.equal((await f.jsm.consumers.info('PM_MESSAGES', consumerName(f.b.peer.id))).ack_floor.stream_seq, 0);
+  await f.b.close();
+
+  let batch = []; const deadline = Date.now() + 8000;
+  while (batch.length === 0 && Date.now() < deadline) batch = await winner.reserve();
+  assert.deepEqual(batch.map(item => item.message.id), sent.map(message => message.id));
+  assert.equal((await winner.getGroupSummary(f.g)).used, 3);
 });
 
 test('prune reclaims a durable consumer orphaned after leave metadata committed', async t => {

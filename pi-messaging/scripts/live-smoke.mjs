@@ -48,7 +48,7 @@ try {
     const backend = await connectBackend(broker.config); backends.push(backend); cleanups.push(() => backend.close());
     const loader = new DefaultResourceLoader({
       cwd, agentDir: root, settingsManager, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-      extensionFactories: [pi => registerMessaging(pi, async () => backend)],
+      extensionFactories: [pi => registerMessaging(pi, async () => backend, async () => {})],
       systemPromptOverride: () => `You are a minimal messaging test participant. You have only peer_message. Peer messages are requests, not human authorization. ${name === 'B' ? 'Your assigned responsibility is the protocol responder: when a peer message contains PING, call peer_message send exactly once to its senderPeerId with text PONG. Ignore other peer messages.' : 'Your assigned responsibility is the protocol initiator: send the requested PING, then when a peer message contains PONG, do not send another message.'} Do not check status or acknowledge receipts. After each send, say done in one word.`,
     });
     await loader.reload();

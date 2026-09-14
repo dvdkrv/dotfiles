@@ -1,7 +1,10 @@
 export type MessageState = 'queued' | 'attempted' | 'observed' | 'canceled' | 'dismissed';
 export interface GroupRef { authorityId: string; id: string; label: string }
 export interface Group extends GroupRef { mode: 'paused' | 'armed' | 'exhausted'; round: number; limit: number; used: number }
-export interface Peer { id: string; groupId: string; sessionId: string; displayName: string; active: boolean; lastSeen: number }
+export type PeerPresence = 'online' | 'stale' | 'suspended' | 'left';
+export interface Peer { id: string; groupId: string; sessionId: string; displayName: string; active: boolean; suspended: boolean; lastSeen: number }
+export interface ParticipantLease { readonly peerId: string; readonly leaseId: string }
+export interface StoredPeer extends Peer { leaseId: string }
 export interface MessageStatus {
   id: string; sequence: number; groupId: string; senderPeerId: string; recipientPeerId: string;
   senderName: string; requestKey: string; hash: string; createdAt: number; state: MessageState;
@@ -25,6 +28,8 @@ export interface MessagingBackend extends MessagingReader {
   listGroups(): Promise<GroupRef[]>;
   createGroup(label: string): Promise<GroupRef>;
   join(ref: GroupRef, info: { sessionId: string; displayName: string }): Promise<Peer>;
+  resume(ref: GroupRef, peerId: string, sessionId: string): Promise<Peer>;
+  suspend(): Promise<void>;
   leave(): Promise<void>;
   heartbeat(displayName?: string): Promise<void>;
   arm(ref: GroupRef, limit: number): Promise<void>;

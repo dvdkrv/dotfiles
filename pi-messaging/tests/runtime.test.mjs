@@ -16,12 +16,12 @@ function fixture(count = 1) {
   const group = { authorityId: randomUUID(), id: randomUUID(), label: 'review' };
   const peer = { id: randomUUID(), groupId: group.id };
   const reservations = Array.from({ length: count }, (_, index) => reservation(group, peer, index));
-  const calls = []; const observed = []; const errors = [];
+  const calls = []; const observed = []; const errors = []; const dispositions = [];
   let next = reservations; let ready = true;
   const backend = { peer, closed: false, getGroupSummary: async () => ({ group, remaining: 11, mode: 'armed' }), reserve: async () => { const value = next; next = []; return value; },
-    observe: async values => { observed.push(values); }, leave: async () => {}, heartbeat: async () => {}, onChange: () => () => {} };
+    observe: async values => { observed.push(values); }, suspend: async () => { dispositions.push('suspend'); }, leave: async () => { dispositions.push('leave'); }, heartbeat: async () => {}, onChange: () => () => {} };
   const runtime = new MessagingRuntime(backend, group, { ready: () => ready, deliver: (...args) => calls.push(args), status: () => {}, error: text => errors.push(text) });
-  return { runtime, backend, group, reservations, calls, observed, errors, setReady: value => { ready = value; } };
+  return { runtime, backend, group, reservations, calls, observed, errors, dispositions, setReady: value => { ready = value; } };
 }
 
 test('idle readiness hands off one batch-shaped custom message and one receipt observes it', async () => {
@@ -69,12 +69,24 @@ test('partial, duplicate, reordered, and forged batch receipts observe nothing',
   assert.equal(f.observed.length, 1); assert.equal(f.observed[0].length, 3);
 });
 
-test('leave during an asynchronous reservation never touches the replacement context or refunds', async () => {
+test('suspension during an asynchronous reservation never touches the replacement context or refunds', async () => {
   const f = fixture(); const waiting = deferred(); const started = deferred();
   f.backend.reserve = async () => { started.resolve(); return waiting.promise; };
   const pending = f.runtime.wake(); await started.promise;
   await f.runtime.stop(); waiting.resolve(f.reservations); await pending;
+  assert.deepEqual(f.dispositions, ['suspend']);
   assert.equal(f.calls.length, 0); assert.equal(f.observed.length, 0); assert.equal(f.errors.length, 0);
+});
+
+test('runtime stop suspends by default, leaves only explicitly, and rejects a late exact receipt', async () => {
+  const suspended = fixture(3); await suspended.runtime.wake(); const [message] = suspended.calls[0];
+  await suspended.runtime.stop();
+  assert.deepEqual(suspended.dispositions, ['suspend']);
+  assert.equal(await suspended.runtime.receipt({ ...message, role: 'custom' }), false);
+  assert.equal(suspended.observed.length, 0);
+
+  const departed = fixture(); await departed.runtime.stop('leave');
+  assert.deepEqual(departed.dispositions, ['leave']);
 });
 
 test('retry/compaction gaps defer admission; simultaneous notifications coalesce', async () => {
