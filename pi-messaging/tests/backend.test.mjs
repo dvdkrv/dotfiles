@@ -4,8 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { fork } from 'node:child_process';
 import { once } from 'node:events';
 import { createJiti } from 'jiti';
+import { connect } from '@nats-io/transport-node';
+import { Kvm } from '@nats-io/kv';
 import { brokerFixture } from './helpers/broker.mjs';
 const { connectBackend } = await createJiti(import.meta.url).import('../src/nats-backend.ts');
+const consumerName = peerId => `peer_${peerId.replaceAll('-', '')}`;
 async function fixture(t) {
   const f = await brokerFixture(t); if (!f) return null;
   const a = await connectBackend(f.config, { initialize: true }); t.after(() => a.close());
@@ -14,6 +17,121 @@ async function fixture(t) {
   await a.join(g, { sessionId: 'a', displayName: 'Alice' }); await b.join(g, { sessionId: 'b', displayName: 'Bob' });
   return { ...f, a, b, g };
 }
+
+test('migrates v1 ledger once before backend exposure without losing initialized state', async t => {
+  const f = await brokerFixture(t); if (!f) return;
+  const initializer = await connectBackend(f.config, { initialize: true }); await initializer.close();
+  const nc = await connect({ servers: f.config.server, token: f.config.token }); t.after(() => nc.close());
+  const kv = await new Kvm(nc).open('PM_CONTROL');
+  const groupId = randomUUID(); const senderId = randomUUID(); const recipientId = randomUUID(); const otherSenderId = randomUUID();
+  const queuedId = randomUUID(); const attemptedId = randomUUID(); const attemptId = randomUUID();
+  const legacy = {
+    version: 1, authorityId: f.config.authorityId, sequence: 2,
+    groups: {
+      [groupId]: { authorityId: f.config.authorityId, id: groupId, label: 'legacy-backend', mode: 'armed', round: 4, limit: 5, used: 1 },
+    },
+    peers: {
+      [senderId]: { id: senderId, groupId, sessionId: 'legacy-sender', displayName: 'Legacy Sender', active: true, lastSeen: 1_000 },
+      [recipientId]: { id: recipientId, groupId, sessionId: 'legacy-recipient', displayName: 'Legacy Recipient', active: true, lastSeen: 1_001 },
+      [otherSenderId]: { id: otherSenderId, groupId, sessionId: 'legacy-other', displayName: 'Legacy Other', active: false, lastSeen: 999 },
+    },
+    messages: {
+      [queuedId]: { id: queuedId, sequence: 1, groupId, senderPeerId: senderId, recipientPeerId: recipientId, senderName: 'Legacy Sender', requestKey: 'legacy-queued', hash: '1'.repeat(64), createdAt: 1_010, state: 'queued' },
+      [attemptedId]: { id: attemptedId, sequence: 2, groupId, senderPeerId: otherSenderId, recipientPeerId: recipientId, senderName: 'Legacy Other', requestKey: 'legacy-attempted', hash: '2'.repeat(64), createdAt: 1_020, state: 'attempted', inReplyTo: queuedId, attemptId, attemptRound: 4, attemptedAt: 1_021 },
+    },
+  };
+  const initialized = await kv.get('state');
+  await kv.update('state', JSON.stringify(legacy), initialized.revision);
+  const before = await kv.get('state');
+
+  const upgraded = await connectBackend(f.config); t.after(() => upgraded.close());
+  const after = await kv.get('state'); const current = after.json();
+  assert.equal(after.revision, before.revision + 1, 'migration must commit exactly one KV revision');
+  assert.equal(current.version, 2);
+  const projection = {
+    ...current, version: 1,
+    peers: Object.fromEntries(Object.entries(current.peers).map(([id, { suspended, leaseId, ...peer }]) => [id, peer])),
+  };
+  assert.equal(JSON.stringify(projection), JSON.stringify(legacy), 'all v1 JSON fields and ordering must survive migration');
+  assert.ok(Object.values(current.peers).every(peer => peer.suspended === false && /^[0-9a-f-]{36}$/.test(peer.leaseId)));
+  await upgraded.close();
+
+  const reconnected = await connectBackend(f.config); t.after(() => reconnected.close());
+  assert.equal((await kv.get('state')).revision, after.revision, 'v2 reconnect must not write another migration revision');
+});
+
+test('resumes a preserved durable inbox as one ordered three-message batch', async t => {
+  const f = await fixture(t); if (!f) return;
+  const senders = [f.a];
+  for (let index = 1; index < 3; index++) {
+    const sender = await connectBackend(f.config); t.after(() => sender.close());
+    await sender.join(f.g, { sessionId: `resume-sender-${index}`, displayName: `Resume Sender ${index}` });
+    senders.push(sender);
+  }
+  await f.a.arm(f.g, 3);
+  const original = f.b.peer; const sent = [];
+  for (let index = 0; index < senders.length; index++) sent.push(await senders[index].send({ toPeerId: original.id, text: `preserved-${index}` }, `preserved-${index}`));
+  const beforeInfo = await f.a.jsm.consumers.info('PM_MESSAGES', consumerName(original.id));
+  const beforeCount = (await f.a.jsm.streams.info('PM_MESSAGES')).state.consumer_count;
+
+  await f.b.suspend(); await f.b.close();
+  const replacement = await connectBackend(f.config); t.after(() => replacement.close());
+  const resumed = await replacement.resume(f.g, original.id, original.sessionId);
+  assert.deepEqual(resumed, replacement.peer);
+  assert.deepEqual({ id: resumed.id, groupId: resumed.groupId, sessionId: resumed.sessionId, displayName: resumed.displayName },
+    { id: original.id, groupId: original.groupId, sessionId: original.sessionId, displayName: original.displayName });
+  assert.equal(Object.hasOwn(resumed, 'leaseId'), false);
+  assert.ok((await replacement.peers(f.g)).every(peer => !Object.hasOwn(peer, 'leaseId')));
+  const listed = (await replacement.listMessages(f.g)).sort((left, right) => left.sequence - right.sequence);
+  assert.deepEqual(listed.map(message => [message.id, message.sequence, message.recipientPeerId]), sent.map(message => [message.id, message.sequence, original.id]));
+  assert.equal((await f.a.jsm.streams.info('PM_MESSAGES')).state.consumer_count, beforeCount);
+  const afterInfo = await f.a.jsm.consumers.info('PM_MESSAGES', consumerName(original.id));
+  assert.deepEqual({
+    stream: afterInfo.stream_name, durable: afterInfo.config.durable_name, subject: afterInfo.config.filter_subject,
+    ack: afterInfo.config.ack_policy, deliver: afterInfo.config.deliver_policy,
+    maxAckPending: afterInfo.config.max_ack_pending, ackWait: afterInfo.config.ack_wait,
+  }, {
+    stream: 'PM_MESSAGES', durable: consumerName(original.id), subject: `pm.message.${f.g.id}.${original.id}.*`,
+    ack: 'explicit', deliver: 'all', maxAckPending: 8, ackWait: 5_000_000_000,
+  });
+  assert.equal(afterInfo.created.toISOString?.() ?? afterInfo.created, beforeInfo.created.toISOString?.() ?? beforeInfo.created, 'resume must retain the existing durable');
+
+  const batch = await replacement.reserve();
+  assert.deepEqual(batch.map(item => item.message.id), sent.map(message => message.id));
+  assert.deepEqual(batch.map(item => item.envelope.text), ['preserved-0', 'preserved-1', 'preserved-2']);
+  assert.equal((await replacement.getGroupSummary(f.g)).used, 3);
+  await replacement.observe(batch);
+  assert.ok((await replacement.listMessages(f.g)).every(message => message.state === 'observed'));
+});
+
+test('attempted message and allowance survive suspend and resume until explicit dismissal', async t => {
+  const f = await fixture(t); if (!f) return;
+  const sender = await connectBackend(f.config); t.after(() => sender.close());
+  await sender.join(f.g, { sessionId: 'waiting-sender', displayName: 'Waiting Sender' });
+  await f.a.arm(f.g, 2);
+  const attemptedMessage = await f.a.send({ toPeerId: f.b.peer.id, text: 'attempted' }, 'attempted-before-resume');
+  const reservation = (await f.b.reserve())[0];
+  const waiting = await sender.send({ toPeerId: f.b.peer.id, text: 'waiting' }, 'waiting-before-resume');
+  const original = f.b.peer;
+  const beforeAttempt = (await f.a.listMessages(f.g)).find(message => message.id === attemptedMessage.id);
+  const beforeSummary = await f.a.getGroupSummary(f.g);
+
+  await f.b.suspend(); await f.b.close();
+  const replacement = await connectBackend(f.config); t.after(() => replacement.close());
+  await replacement.resume(f.g, original.id, original.sessionId);
+  assert.deepEqual(await replacement.reserve(), []);
+  const afterAttempt = (await replacement.listMessages(f.g)).find(message => message.id === attemptedMessage.id);
+  assert.deepEqual(afterAttempt, beforeAttempt);
+  assert.deepEqual(await replacement.getGroupSummary(f.g), beforeSummary);
+  assert.equal(afterAttempt.attemptId, reservation.attemptId);
+  assert.equal(afterAttempt.attemptRound, reservation.round);
+
+  await replacement.resolveMessage(f.g, attemptedMessage.id, 'dismissed');
+  assert.equal((await replacement.getGroupSummary(f.g)).used, 1, 'dismissal must not refund the attempted credit');
+  const next = await replacement.reserve();
+  assert.deepEqual(next.map(item => item.message.id), [waiting.id]);
+  assert.equal((await replacement.getGroupSummary(f.g)).used, 2);
+});
 
 test('real queue: opt-in, shared allowance, exact envelope, idempotency and terminal recovery', async t => {
   const f = await fixture(t); if (!f) return;

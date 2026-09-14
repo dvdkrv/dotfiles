@@ -140,10 +140,7 @@ export function suspendPeer(s: Ledger, lease: ParticipantLease): void {
   const peer = requireLease(s, lease); const nextLeaseId = randomUUID();
   peer.suspended = true; peer.leaseId = nextLeaseId;
 }
-export function leavePeer(s: Ledger, lease: ParticipantLease): void;
-/** @deprecated Transitional compile fence for the pre-Task 3 backend; bare IDs always fail authorization. */
-export function leavePeer(s: Ledger, lease: string): void;
-export function leavePeer(s: Ledger, lease: ParticipantLease | string): void {
+export function leavePeer(s: Ledger, lease: ParticipantLease): void {
   const peer = authorizeLease(s, lease); const nextLeaseId = randomUUID();
   peer.active = false; peer.suspended = false; peer.leaseId = nextLeaseId;
 }
@@ -152,10 +149,7 @@ export function revokePeer(s: Ledger, ref: GroupRef, peerId: string): void {
   if (!peer || peer.groupId !== group.id) fail('missing', 'Peer not in group');
   const nextLeaseId = randomUUID(); peer.active = false; peer.suspended = false; peer.leaseId = nextLeaseId;
 }
-export function heartbeat(s: Ledger, lease: ParticipantLease, displayName?: string): void;
-/** @deprecated Transitional compile fence for the pre-Task 3 backend; bare IDs always fail authorization. */
-export function heartbeat(s: Ledger, lease: string, displayName?: string): void;
-export function heartbeat(s: Ledger, lease: ParticipantLease | string, displayName?: string): void {
+export function heartbeat(s: Ledger, lease: ParticipantLease, displayName?: string): void {
   const peer = authorizeLease(s, lease); const nextName = displayName === undefined ? undefined : validateDisplayName(displayName);
   peer.lastSeen = Date.now(); if (nextName !== undefined) peer.displayName = nextName;
 }
@@ -167,10 +161,7 @@ export function arm(s: Ledger, ref: GroupRef, limit: number): void {
   g.round++; g.limit = limit; g.used = 0; g.mode = 'armed';
 }
 export function pause(s: Ledger, ref: GroupRef): void { groupOf(s, ref).mode = 'paused'; }
-export function prepareMessage(s: Ledger, senderLease: ParticipantLease, input: SendInput, requestKey: string): MessageStatus;
-/** @deprecated Transitional compile fence for the pre-Task 3 backend; bare IDs always fail authorization. */
-export function prepareMessage(s: Ledger, senderLease: string, input: SendInput, requestKey: string): MessageStatus;
-export function prepareMessage(s: Ledger, senderLease: ParticipantLease | string, input: SendInput, requestKey: string): MessageStatus {
+export function prepareMessage(s: Ledger, senderLease: ParticipantLease, input: SendInput, requestKey: string): MessageStatus {
   const sender = authorizeLease(s, senderLease); validateInput(input);
   if (!requestKey || requestKey.length > 512) fail('validation', 'Invalid request key');
   const hash = payloadHash(input);
@@ -189,17 +180,11 @@ export function prepareMessage(s: Ledger, senderLease: ParticipantLease | string
   const m: MessageStatus = { id: randomUUID(), sequence: ++s.sequence, groupId: sender.groupId, senderPeerId: sender.id, recipientPeerId: recipient.id, senderName: sender.displayName, requestKey, hash, createdAt: Date.now(), state: 'queued', ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}) };
   s.messages[m.id] = m; return m;
 }
-export function canReceive(s: Ledger, recipientLease: ParticipantLease): boolean;
-/** @deprecated Transitional compile fence for the pre-Task 3 backend; bare IDs always fail authorization. */
-export function canReceive(s: Ledger, recipientLease: string): boolean;
-export function canReceive(s: Ledger, recipientLease: ParticipantLease | string): boolean {
+export function canReceive(s: Ledger, recipientLease: ParticipantLease): boolean {
   const peer = authorizeLease(s, recipientLease); const group = s.groups[peer.groupId];
   return group.mode === 'armed' && group.used < group.limit && !Object.values(s.messages).some(m => m.recipientPeerId === peer.id && m.state === 'attempted');
 }
-export function admitBatch(s: Ledger, recipientLease: ParticipantLease, messageIds: readonly string[]): Reservation[];
-/** @deprecated Transitional compile fence for the pre-Task 3 backend; bare IDs always fail authorization. */
-export function admitBatch(s: Ledger, recipientLease: string, messageIds: readonly string[]): Reservation[];
-export function admitBatch(s: Ledger, recipientLease: ParticipantLease | string, messageIds: readonly string[]): Reservation[] {
+export function admitBatch(s: Ledger, recipientLease: ParticipantLease, messageIds: readonly string[]): Reservation[] {
   const peer = authorizeLease(s, recipientLease);
   if (messageIds.length === 0) return [];
   if (messageIds.length > MAX_QUEUED_PER_RECIPIENT || new Set(messageIds).size !== messageIds.length) fail('validation', 'Invalid messaging batch');
@@ -220,10 +205,7 @@ export function admitBatch(s: Ledger, recipientLease: ParticipantLease | string,
   });
 }
 export function admit(s: Ledger, recipientLease: ParticipantLease, messageId: string): Reservation | null { return admitBatch(s, recipientLease, [messageId])[0] ?? null; }
-export function observeBatch(s: Ledger, recipientLease: ParticipantLease, reservations: readonly Reservation[]): void;
-/** @deprecated Transitional compile fence for the pre-Task 3 backend; the old arity always fails authorization. */
-export function observeBatch(s: Ledger, reservations: readonly Reservation[]): void;
-export function observeBatch(s: Ledger, recipientLease: ParticipantLease | readonly Reservation[], reservations?: readonly Reservation[]): void {
+export function observeBatch(s: Ledger, recipientLease: ParticipantLease, reservations: readonly Reservation[]): void {
   const peer = authorizeLease(s, recipientLease);
   if (!reservations) fail('participation', 'A current peer lease is required');
   if (reservations.length === 0 || reservations.length > MAX_QUEUED_PER_RECIPIENT) fail('receipt', 'Invalid receipt batch');
