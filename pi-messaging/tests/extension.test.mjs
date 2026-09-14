@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readdir, readFile } from 'node:fs/promises';
 import { createJiti } from 'jiti';
 const jiti = createJiti(import.meta.url);
 const { registerMessaging } = await jiti.import('../extensions/messaging.ts');
@@ -58,6 +59,54 @@ function fixture(t) {
   };
 }
 async function execute(f, action, fields = {}) { return f.tools.get('peer_message').execute(randomUUID(), { action, ...fields }, undefined, undefined, f.ctx); }
+async function moduleFiles(directory) {
+  const files = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const url = new URL(entry.name + (entry.isDirectory() ? '/' : ''), directory);
+    if (entry.isDirectory()) files.push(...await moduleFiles(url));
+    else if (entry.name.endsWith('.mjs')) files.push(url);
+  }
+  return files;
+}
+function callArgumentCount(source, open) {
+  const stack = ['(']; let commas = 0; let content = false; let quote; let lineComment = false; let blockComment = false;
+  for (let index = open + 1; index < source.length; index++) {
+    const char = source[index]; const next = source[index + 1];
+    if (lineComment) { if (char === '\n') lineComment = false; continue; }
+    if (blockComment) { if (char === '*' && next === '/') { blockComment = false; index++; } continue; }
+    if (quote) { if (char === '\\') index++; else if (char === quote) quote = undefined; continue; }
+    if (char === '/' && next === '/') { lineComment = true; index++; continue; }
+    if (char === '/' && next === '*') { blockComment = true; index++; continue; }
+    if (char === "'" || char === '"' || char === '`') { quote = char; content = true; continue; }
+    if ('([{'.includes(char)) { stack.push(char); content = true; continue; }
+    if (')]}'.includes(char)) {
+      stack.pop();
+      if (stack.length === 0) return content ? commas + 1 : 0;
+      continue;
+    }
+    if (char === ',' && stack.length === 1) commas++;
+    else if (!/\s/.test(char)) content = true;
+  }
+  throw new Error('Unterminated registerMessaging call');
+}
+
+test('test and smoke backend injections always provide inert readiness', async () => {
+  const missing = [];
+  for (const file of await Promise.all([
+    moduleFiles(new URL('./', import.meta.url)),
+    moduleFiles(new URL('../scripts/', import.meta.url)),
+  ]).then(groups => groups.flat())) {
+    const source = await readFile(file, 'utf8');
+    for (const match of source.matchAll(/\bregisterMessaging\s*\(/g)) {
+      const open = match.index + match[0].lastIndexOf('(');
+      if (callArgumentCount(source, open) === 2) {
+        const line = source.slice(0, match.index).split('\n').length;
+        missing.push(`${file.pathname}:${line}`);
+      }
+    }
+  }
+  assert.deepEqual(missing, [], `Injected backend factories missing inert readiness:\n${missing.join('\n')}`);
+});
 
 test('native slash completion lists subcommands with hints and replaces the full argument prefix', async t => {
   const f = fixture(t); const command = f.commands.get('messages');

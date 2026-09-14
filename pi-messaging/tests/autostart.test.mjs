@@ -61,11 +61,19 @@ async function isolatedRoot(t) {
 async function configBytes(root) {
   return readFile(join(root, 'messaging', 'config.json'));
 }
-async function runContenders(options, count) {
-  const children = Array.from({ length: count }, () => fork(
-    new URL('./helpers/autostart-contender.mjs', import.meta.url),
-    { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] },
-  ));
+async function runContenders(options, count, fixture = {}) {
+  const children = Array.from({ length: count }, (_, index) => {
+    const child = fork(
+      fixture.module ?? new URL('./helpers/autostart-contender.mjs', import.meta.url),
+      { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] },
+    );
+    fixture.onChild?.(child, index);
+    return child;
+  });
+  const exits = children.map(child => new Promise(resolve => {
+    child.once('exit', resolve);
+    child.once('error', () => child.once('close', resolve));
+  }));
   const completions = children.map(child => new Promise((resolve, reject) => {
     let result; let stderr = '';
     child.stderr.on('data', chunk => { stderr += chunk; });
@@ -80,8 +88,12 @@ async function runContenders(options, count) {
       else resolve(result);
     });
   }));
-  for (const child of children) child.send(options);
-  return Promise.all(completions);
+  for (const [index, child] of children.entries()) child.send(typeof options === 'function' ? options(index) : options);
+  const settled = await Promise.allSettled(completions);
+  await Promise.all(exits);
+  const failure = settled.find(result => result.status === 'rejected');
+  if (failure) throw failure.reason;
+  return settled.map(result => result.value);
 }
 async function assertConfigUnchanged(root, before) {
   assert.deepEqual(await configBytes(root), before);
@@ -159,6 +171,22 @@ test('concurrent starter processes elect one broker authority that outlives them
   assert.equal(await probeBroker(readConfig(f.root)), 'ready');
   const processFile = join(f.root, 'messaging', 'broker-process.json');
   assert.equal(alive(JSON.parse(await readFile(processFile, 'utf8')).pid), true);
+});
+
+test('runContenders settles every child exit before propagating a failure', { timeout: 5000 }, async () => {
+  let exits = 0;
+  await assert.rejects(
+    runContenders(
+      index => ({ delayMs: [10, 250, 500][index], fail: index === 0 }),
+      3,
+      {
+        module: new URL('./helpers/contender-completion.mjs', import.meta.url),
+        onChild: child => child.once('exit', () => { exits++; }),
+      },
+    ),
+    /planned contender failure/,
+  );
+  assert.equal(exits, 3);
 });
 
 test('missing binary fails without replacing configuration authority', { timeout: 15_000 }, async t => {
