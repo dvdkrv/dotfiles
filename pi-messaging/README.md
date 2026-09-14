@@ -21,7 +21,7 @@ In each session:
 3. In either session, `/messages arm 12` — confirm one shared automatic-work allowance.
 4. Ask an agent to contact the other participant; it can discover the recipient itself. Alternatively, use `/messages send`.
 
-**Quiet by default:** peers can wake idle sessions, but incoming messages wait for busy work to finish. Joining does not arm a group. New groups are paused.
+**Quiet by default:** peers can wake idle sessions, but incoming messages wait for busy work to finish. Joining or resuming does not arm a group. New groups are paused. After reload, shutdown, session replacement, or tree navigation, run `/messages join <group>` again: the human dialog resumes an eligible saved identity rather than silently participating.
 
 Sending enqueues a message and returns without waiting for the recipient to process it. Each queued message reserves one current-round allowance slot without spending it; a never-armed group, exhausted/reserved capacity, a sender's existing unresolved outbound, or eight already queued messages for the recipient causes the send to fail. Canceling queued work releases its reserved slot. Agents are guided to continue their own assignment, not poll for replies or start periodic check-ins. Substantive blockers, contract changes, and required completion reports are still appropriate; avoiding unnecessary chatter is model guidance, not a restriction on all possible tool calls.
 
@@ -32,8 +32,8 @@ A busy session normally leaves messages queued in the broker without spending al
 | Command | Purpose |
 |---|---|
 | `/messages` or `status` | Group mode, allowance, pending count, and peer presence |
-| `join [group]` | Explicitly join; creates a fresh peer identity |
-| `leave` | Stop this runtime's new admissions |
+| `join [group]` | Explicitly join or resume an eligible identity after human confirmation |
+| `leave` | Final leave: stop participation and make this identity non-resumable |
 | `arm [N]` | Confirm a **new** shared round, default 12, range 1–100 |
 | `pause` | Persistently stop new group admissions |
 | `send` | Compose an addressed message through the same queue/budget |
@@ -53,15 +53,18 @@ Peer lists show names such as `test-reviewer · session a31b7c92`. The initial d
 
 Messaging injects no hidden identity, onboarding, or naming context. A joined agent explicitly calls `peer_message` with `action: "peers"` when it needs current identity or addressing information. The result includes `selfId`, `selfSessionId`, and `selfDisplayName`, plus bounded active-peer metadata. It can call `peer_message` with `action: "rename"` and a `displayName` describing its existing role. Names are self-reported metadata, not new task assignments or authority. With no known assignment, the session-ID default remains appropriate. A reply can use a known sender ID from the incoming batch without another discovery lookup.
 
-There is no naming-only model call, automatic greeting, context hook, or sharing of other conversations. Join, leave, heartbeat, rename, reload, and resume do not rewrite model context or tool definitions. Normal discovery/rename tool calls use ordinary agent-turn tokens. Incoming peer batches remain in conversation history once at their natural append-only position so the recipient can act on them. Renaming leaves queued messages and routing IDs unchanged; session-title changes do not overwrite the role. Rejoining starts a fresh routing identity and the session-ID default, never restores an old inbox.
+There is no naming-only model call, automatic greeting, context hook, or sharing of other conversations. Join, leave, heartbeat, rename, reload, and resume do not rewrite model context or tool definitions. Normal discovery/rename tool calls use ordinary agent-turn tokens. Incoming peer batches remain in conversation history once at their natural append-only position so the recipient can act on them. Renaming leaves queued messages and routing IDs unchanged; session-title changes do not overwrite the role.
+
+Automatic lifecycle departure suspends the identity: its routing ID, role, durable inbox, queued work, and already-attempted work remain intact. The next explicit `/messages join <group>` finds active stale/suspended records for the exact saved Pi session. One candidate is named in the confirmation; several require a numbered role/session/presence/age/unresolved-count picker. Any online same-session match blocks before confirmation—there is no takeover path. Repeated join for the already-local same group/session is a no-op, while another group requires final leave first. Only explicit `/messages leave` or human revoke makes an identity non-resumable; a later join then creates a fresh routing ID and session-ID default.
 
 ## Safety and recovery
 
 - The allowance is **group-wide**, persistent, and counts individual attempts—not successful model responses or batches. Each queued message reserves one current-round slot; admission spends that slot. Replies, time, restarts, and new threads never refill it. Rearming below the existing queued count is rejected.
 - Each sender may have only one unresolved `queued` or `attempted` outbound. Each recipient may have at most eight queued messages and one unresolved admitted batch. If Pi never confirms the complete batch receipt, inspect `/messages inbox` and explicitly dismiss individual attempts to unblock the recipient and senders.
 - **No automatic replay or refund of an uncertain attempt or batch.** Missing, duplicated, reordered, partial, or forged batch receipts observe nothing. Broker acknowledgments and redeliveries are not permission for another model turn. A receipt means Pi observed the custom message, not that the agent completed the task.
-- **Pause/leave cannot recall messages already admitted to Pi.** Some can still appear afterward.
-- Reload, restart, new/resumed/forked sessions, and tree navigation require explicit rejoining. Old inboxes are never silently redirected. Revoke stale abandoned peers to reclaim participation slots, then prune eligible history.
+- **Pause/suspend/leave cannot recall messages already admitted to Pi.** Some can still appear afterward.
+- Reload, shutdown, session replacement, and tree navigation suspend locally and require explicit `/messages join` to resume. They never auto-resume or invoke a model. If suspension cannot be confirmed, local state closes and the stored active peer naturally becomes stale; it is not converted into final leave.
+- Active stale and suspended peers remain routable and consume an active-peer slot. Resume preserves queued batches. Existing attempted messages remain blocking and are never replayed or refunded; only explicit dismissal unblocks them. Revoke abandoned peers to reclaim slots, then prune eligible history.
 - A send can reserve metadata and fail before its body is published. The inbox shows a missing body; cancel that queued reservation. If publication is uncertain, inspect before composing another message—resending may duplicate work.
 - Disconnects and uncertain storage operations stop automatic admission. Inspect/reconnect through the human command and explicitly rejoin; the group allowance is retained. Missing or mismatched initialized state is an error, never a fresh replacement ledger.
 - Peer text is a request/report, **not human authorization**. This is protection against accidental messaging loops, **not a sandbox against programs running as your OS user**, filesystem rollback, or lost/corrupt storage. It does not limit work within one agent run or another extension's loop.
@@ -85,11 +88,27 @@ For manual diagnosis, `NATS_SERVER=/path/to/nats-server npm run broker --workspa
 
 ## Architecture in brief
 
-JetStream stores bodies and routes them through one durable filtered pull consumer per participation. A bounded KV entry stores **metadata and the admission ledger**, not duplicate bodies. One compare-and-set update atomically revalidates and admits an ordered batch of up to eight messages, records a distinct attempt for each member, and consumes one allowance credit per member. The runtime calls Pi once per confirmed batch after a fresh generation check. A lost admission acknowledgment never leads to a guessed/retried handoff.
+JetStream stores bodies and routes them through one durable filtered pull consumer per participation. A bounded KV entry stores **metadata and the admission ledger**, not duplicate bodies. Ledger v2 keeps a private per-participant lease used by every participant-authorized compare-and-set mutation; leases never appear in public peer/tool/UI DTOs. A validated v1 ledger is migrated losslessly with one expected-revision CAS before backend exposure. A concurrent winner is accepted only after strict v2 validation, and uncertain migration fails closed. Envelope and broker-config versions remain v1.
+
+One compare-and-set update atomically revalidates and admits an ordered batch of up to eight messages, records a distinct attempt for each member, and consumes one allowance credit per member. Resume rotates the lease and rebinds the same exactly validated durable consumer, fencing old processes and held pulls without ACK, replay, or refund. The runtime calls Pi once per confirmed batch after a fresh generation check. A lost admission acknowledgment never leads to a guessed/retried handoff.
 
 Enqueue reserves metadata and current-round capacity before publication. Expected-last-subject-sequence prevents duplicate publication while the subject is retained. Batch delivery follows broker publication order, which can differ from metadata reservation order during concurrent sends. Messages published after a reservation boundary wait for the next idle batch. Change notifications wake the runtime; a five-second heartbeat reconciles missed notifications. No model call is used to poll.
 
 An asynchronous `MessagingBackend` separates Pi from NATS. `pi-messaging/public` exports a read-only `MessagingReader` interface and `connectReader(config)` for a separate configured connection; it exposes no join/arm/body API and never initializes storage. Future remote support must preserve one authoritative budget and add its own authentication/authorization/partition-recovery design. It is not enabled merely by changing a hostname.
+
+## Human-controlled lifecycle rollout
+
+Do not migrate an active installation by merely reloading one process. After the signed change is merged and packages are ready, the human performs rollout at a safe idle boundary:
+
+1. Pause new admissions and let current Pi work settle.
+2. Close every v1 messaging-enabled Pi process so none can race migration.
+3. Ensure the managed NATS binary is installed, then apply the upgraded package.
+4. Open the first upgraded Pi session and explicitly run `/messages join <group>`; that authenticated command connection may perform the one-time ledger migration before showing resume choices.
+5. Reopen other saved sessions and explicitly run the same command, selecting each intended identity.
+6. Inspect and explicitly revoke unwanted historical peers.
+7. Separately approve stopping any manually managed broker and validate first-Pi autostart against retained data.
+
+If a v1 process was left open, the migrated leases fence it; close/reload it before continuing. Rollback after migration requires v2-aware code. The extension never installs NATS, reloads Pi, stops a live broker, joins, resumes, arms, or revokes on the human's behalf.
 
 ## Tests
 
