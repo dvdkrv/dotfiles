@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { createJiti } from 'jiti';
 const jiti = createJiti(import.meta.url);
 const p = await jiti.import('../src/policy.ts');
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function fixture() {
   const state = p.newLedger(randomUUID());
@@ -194,6 +195,110 @@ test('pruning preserves unresolved work and live-sender deduplication', () => {
   p.leavePeer(f.state, f.a.id);
   assert.deepEqual(p.prunable(f.state, f.group, Infinity), [canceled.id]);
   assert.equal(f.state.messages[queued.id].state, 'queued');
+});
+
+test('v1 ledger migration preserves every authoritative field and adds private leases', () => {
+  const authorityId = randomUUID(); const groupId = randomUUID();
+  const activeSenderId = randomUUID(); const activeRecipientId = randomUUID(); const inactiveId = randomUUID();
+  const queuedId = randomUUID(); const attemptedId = randomUUID(); const observedId = randomUUID();
+  const attemptedAttemptId = randomUUID(); const observedAttemptId = randomUUID();
+  const v1 = {
+    version: 1,
+    authorityId,
+    sequence: 3,
+    groups: {
+      [groupId]: { authorityId, id: groupId, label: 'legacy-review', mode: 'armed', round: 7, limit: 6, used: 2 },
+    },
+    peers: {
+      [activeSenderId]: { id: activeSenderId, groupId, sessionId: 'active-sender-session', displayName: 'Active Sender', active: true, lastSeen: 1_000 },
+      [activeRecipientId]: { id: activeRecipientId, groupId, sessionId: 'active-recipient-session', displayName: 'Active Recipient', active: true, lastSeen: 1_001 },
+      [inactiveId]: { id: inactiveId, groupId, sessionId: 'inactive-session', displayName: 'Inactive Peer', active: false, lastSeen: 999 },
+    },
+    messages: {
+      [queuedId]: {
+        id: queuedId, sequence: 1, groupId, senderPeerId: activeSenderId, recipientPeerId: inactiveId,
+        senderName: 'Active Sender', requestKey: 'queued-request-key', hash: '1'.repeat(64), createdAt: 1_010, state: 'queued',
+      },
+      [attemptedId]: {
+        id: attemptedId, sequence: 2, groupId, senderPeerId: activeSenderId, recipientPeerId: activeRecipientId,
+        senderName: 'Active Sender', requestKey: 'attempted-request-key', hash: '2'.repeat(64), createdAt: 1_020,
+        state: 'attempted', inReplyTo: queuedId, attemptId: attemptedAttemptId, attemptRound: 7, attemptedAt: 1_021,
+      },
+      [observedId]: {
+        id: observedId, sequence: 3, groupId, senderPeerId: inactiveId, recipientPeerId: activeSenderId,
+        senderName: 'Inactive Peer', requestKey: 'observed-request-key', hash: '3'.repeat(64), createdAt: 1_030,
+        state: 'observed', inReplyTo: attemptedId, attemptId: observedAttemptId, attemptRound: 6,
+        attemptedAt: 1_031, observedAt: 1_032, terminalAt: 1_033,
+      },
+    },
+  };
+  const before = structuredClone(v1);
+
+  const { ledger, migrated } = p.migrateLedger(v1, authorityId);
+  assert.equal(migrated, true);
+  assert.equal(ledger.version, 2);
+  assert.deepEqual(ledger.groups, before.groups);
+  assert.deepEqual(ledger.messages, before.messages);
+  assert.equal(ledger.sequence, before.sequence);
+  for (const [id, oldPeer] of Object.entries(before.peers)) {
+    assert.deepEqual(p.publicPeer(ledger.peers[id]), { ...oldPeer, suspended: false });
+    assert.match(ledger.peers[id].leaseId, UUID_PATTERN);
+  }
+  assert.equal(ledger.peers[inactiveId].active, false);
+  assert.deepEqual(v1, before, 'migration must not mutate its input');
+  const current = p.migrateLedger(ledger, authorityId);
+  assert.equal(current.migrated, false);
+  assert.equal(current.ledger, ledger);
+});
+
+test('ledger versions and validators fail closed around migration boundaries', () => {
+  const authorityId = randomUUID(); const groupId = randomUUID(); const peerId = randomUUID();
+  const literalV1 = {
+    version: 1, authorityId, sequence: 0,
+    groups: { [groupId]: { authorityId, id: groupId, label: 'boundary', mode: 'paused', round: 0, limit: 0, used: 0 } },
+    peers: { [peerId]: { id: peerId, groupId, sessionId: 'session', displayName: 'Peer', active: true, lastSeen: 10 } },
+    messages: {},
+  };
+  const current = p.migrateLedger(literalV1, authorityId).ledger;
+  assert.equal(p.newLedger(authorityId).version, 2);
+  assert.throws(() => p.migrateLedger(literalV1, randomUUID()), /authority/i);
+  for (const version of [0, 3, 900]) assert.throws(() => p.migrateLedger({ ...literalV1, version }, authorityId), /unsupported|corrupt/i);
+  assert.throws(() => p.migrateLedger({ ...literalV1, peers: [] }, authorityId), /corrupt/i);
+  assert.throws(() => p.migrateLedger({ ...current, messages: [] }, authorityId), /corrupt/i);
+  assert.throws(() => p.migrateLedger({ ...current, peers: { [peerId]: { ...current.peers[peerId], suspended: undefined } } }, authorityId), /suspension|corrupt/i);
+  assert.throws(() => p.migrateLedger({ ...current, peers: { [peerId]: { ...current.peers[peerId], leaseId: undefined } } }, authorityId), /lease|corrupt/i);
+  assert.throws(() => p.migrateLedger({ ...current, peers: { [peerId]: { ...current.peers[peerId], active: false, suspended: true } } }, authorityId), /inactive|corrupt/i);
+
+  const tooManyGroups = Object.fromEntries(Array.from({ length: 33 }, (_, index) => {
+    const id = randomUUID();
+    return [id, { authorityId, id, label: `group-${index}`, mode: 'paused', round: 0, limit: 0, used: 0 }];
+  }));
+  assert.throws(() => p.migrateLedger({ ...literalV1, groups: tooManyGroups, peers: {} }, authorityId), /bounds|corrupt/i);
+
+  const messageId = randomUUID();
+  const invalidAttempt = {
+    ...literalV1,
+    sequence: 1,
+    messages: {
+      [messageId]: {
+        id: messageId, sequence: 1, groupId, senderPeerId: peerId, recipientPeerId: peerId,
+        senderName: 'Peer', requestKey: 'attempt', hash: 'a'.repeat(64), createdAt: 11, state: 'attempted',
+      },
+    },
+  };
+  assert.throws(() => p.migrateLedger(invalidAttempt, authorityId), /attempt|corrupt/i);
+});
+
+test('peer presence distinguishes online, stale, suspended, and left peers', () => {
+  const state = p.newLedger(randomUUID()); const group = p.createGroup(state, 'presence');
+  const joined = p.joinPeer(state, group, { sessionId: 'session', displayName: 'Peer' }, 70_000);
+  assert.equal(joined.suspended, false); assert.equal(joined.lastSeen, 70_000); assert.match(joined.leaseId, UUID_PATTERN);
+  const peer = p.publicPeer(joined);
+  assert.equal(Object.hasOwn(peer, 'leaseId'), false);
+  assert.equal(p.peerPresence(peer, 100_000), 'online');
+  assert.equal(p.peerPresence({ ...peer, lastSeen: 69_999 }, 100_000), 'stale');
+  assert.equal(p.peerPresence({ ...peer, suspended: true }, 100_000), 'suspended');
+  assert.equal(p.peerPresence({ ...peer, active: false, suspended: false }, 100_000), 'left');
 });
 
 test('summaries omit bodies and authority mismatch or invalid state fails closed', () => {
