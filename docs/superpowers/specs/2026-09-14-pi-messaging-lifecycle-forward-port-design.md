@@ -167,12 +167,15 @@ No implementation or test step reloads a live Pi process, migrates the live ledg
 
 After merge, the human performs rollout at a safe idle boundary:
 
-1. ensure the managed NATS binary is installed;
-2. reload every open messaging-enabled Pi session before allowing migration;
-3. allow the first upgraded connection to migrate the ledger;
-4. explicitly run `/messages join <group>` in each saved session and choose the intended identity;
-5. inspect and explicitly revoke unwanted historical peers;
-6. separately approve stopping the manually managed broker and validating first-Pi autostart against retained data.
+1. pause new admissions and let current Pi work settle;
+2. close every v1 messaging-enabled Pi process so none can race the migration;
+3. ensure the managed NATS binary is installed and apply the upgraded package;
+4. open the first upgraded Pi session and allow its authenticated connection to migrate the ledger;
+5. reopen other saved sessions, explicitly run `/messages join <group>`, and choose each intended identity;
+6. inspect and explicitly revoke unwanted historical peers;
+7. separately approve stopping the manually managed broker and validating first-Pi autostart against retained data.
+
+If a v1 process was accidentally left open, migration deliberately fences it; the human must close/reload it before continuing. The implementation never closes, reloads, or steers a live process automatically.
 
 Rollback after ledger migration requires v2-aware code. Old v1 clients and data recreation remain deliberately blocked.
 
