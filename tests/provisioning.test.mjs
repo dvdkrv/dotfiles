@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -31,8 +31,8 @@ function writeExecutable(path, content) {
   writeFileSync(path, content, { mode: 0o755 });
 }
 
-const toggleThemeScript = new URL('../dot_local/bin/toggle-theme.sh', import.meta.url).pathname;
-const syncTerminalThemeScript = new URL('../dot_local/bin/sync-terminal-theme.sh', import.meta.url).pathname;
+const toggleThemeScript = new URL('../dot_local/bin/executable_toggle-theme.sh', import.meta.url).pathname;
+const syncTerminalThemeScript = new URL('../dot_local/bin/executable_sync-terminal-theme.sh', import.meta.url).pathname;
 
 function themeScriptHarness(clientTheme = 'light') {
   const root = mkdtempSync(join(tmpdir(), 'dotfiles-theme-'));
@@ -44,7 +44,7 @@ function themeScriptHarness(clientTheme = 'light') {
   mkdirSync(stateHome, { recursive: true });
   mkdirSync(bin, { recursive: true });
   mkdirSync(localBin, { recursive: true });
-  writeExecutable(join(localBin, 'toggle-theme.sh'), repositoryFile('dot_local/bin/toggle-theme.sh'));
+  writeExecutable(join(localBin, 'toggle-theme.sh'), repositoryFile('dot_local/bin/executable_toggle-theme.sh'));
   writeExecutable(join(bin, 'tmux'), `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$TMUX_LOG"
 if [[ "$1" == "show-environment" ]]; then
@@ -436,8 +436,8 @@ test('toggle-theme creates canonical state even when explicit dark matches the d
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(readFileSync(harness.stateFile, 'utf8'), 'dark\n');
-  assert.match(repositoryFile('dot_local/bin/toggle-theme.sh'), /mktemp/);
-  assert.match(repositoryFile('dot_local/bin/toggle-theme.sh'), /mv .*"\$STATE"/);
+  assert.match(repositoryFile('dot_local/bin/executable_toggle-theme.sh'), /mktemp/);
+  assert.match(repositoryFile('dot_local/bin/executable_toggle-theme.sh'), /mv .*"\$STATE"/);
 });
 
 test('client attachment creates missing canonical state even when dark matches the default', () => {
@@ -450,6 +450,33 @@ test('client attachment creates missing canonical state even when dark matches t
   assert.equal(result.status, 0, result.stderr);
   assert.equal(readFileSync(harness.stateFile, 'utf8'), 'dark\n');
   assert.match(readFileSync(harness.tmuxLog, 'utf8'), /show-environment LC_TERMINAL_THEME/);
+});
+
+test('chezmoi installs terminal theme helpers as executable files', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dotfiles-theme-install-'));
+  const destination = join(root, 'home');
+  const config = join(root, 'chezmoi.toml');
+  const persistentState = join(root, 'chezmoi.boltdb');
+  const repository = new URL('../', import.meta.url).pathname;
+  const targets = [
+    join(destination, '.local', 'bin', 'toggle-theme.sh'),
+    join(destination, '.local', 'bin', 'sync-terminal-theme.sh'),
+  ];
+  mkdirSync(join(destination, '.local', 'bin'), { recursive: true });
+  writeFileSync(config, '');
+
+  const result = spawnSync('chezmoi', [
+    '--config', config,
+    '--source', repository,
+    '--destination', destination,
+    '--persistent-state', persistentState,
+    'apply', '--force', ...targets,
+  ], { encoding: 'utf8' });
+
+  assert.equal(result.status, 0, result.stderr);
+  for (const target of targets) {
+    assert.equal(statSync(target).mode & 0o777, 0o755, `${target} should be mode 0755`);
+  }
 });
 
 test('tmux loads a Mosh-compatible OSC 52 clipboard capability', () => {

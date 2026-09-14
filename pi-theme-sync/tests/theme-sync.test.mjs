@@ -4,6 +4,7 @@ import { createJiti } from 'jiti';
 
 const jiti = createJiti(import.meta.url);
 const extension = await jiti.import('../extensions/theme-sync.ts');
+const settleScheduledStart = () => new Promise(resolve => setImmediate(resolve));
 
 function setup({ mode = 'tui', initial = 'light', missingTheme, setThemeError } = {}) {
   const events = new Map();
@@ -22,6 +23,10 @@ function setup({ mode = 'tui', initial = 'light', missingTheme, setThemeError } 
         let closed = false;
         return () => { if (!closed) { closed = true; stopped += 1; } };
       },
+      schedule(callback) {
+        const handle = setImmediate(callback);
+        return () => clearImmediate(handle);
+      },
     },
   );
   const ctx = {
@@ -38,22 +43,27 @@ function setup({ mode = 'tui', initial = 'light', missingTheme, setThemeError } 
   return { events, ctx, applied, notifications, themes, watched: () => watched, stopped: () => stopped };
 }
 
-test('startup applies a loaded Theme object and live changes rerender once', async () => {
+test('scheduled startup selection wins after Pi reapplies its dark fallback', async () => {
   const f = setup({ initial: 'light' });
   await f.events.get('session_start')({ reason: 'startup' }, f.ctx);
-  assert.equal(f.applied[0], f.themes.light);
+  f.ctx.ui.setTheme(f.themes.dark);
+  await settleScheduledStart();
+  assert.equal(f.applied.at(-1), f.themes.light);
   assert.deepEqual(f.watched(), { path: '/state/theme', current: 'light', onAppearance: f.watched().onAppearance });
 
+  f.applied.length = 0;
   f.watched().onAppearance('dark');
   f.watched().onAppearance('dark');
-  assert.deepEqual(f.applied, [f.themes.light, f.themes.dark]);
+  assert.deepEqual(f.applied, [f.themes.dark]);
   assert.equal(f.applied.every(value => typeof value === 'object'), true);
 });
 
 test('restart and shutdown clean watchers idempotently', async () => {
   const f = setup();
   await f.events.get('session_start')({ reason: 'startup' }, f.ctx);
+  await settleScheduledStart();
   await f.events.get('session_start')({ reason: 'reload' }, f.ctx);
+  await settleScheduledStart();
   assert.equal(f.stopped(), 1);
   await f.events.get('session_shutdown')({ reason: 'quit' }, f.ctx);
   await f.events.get('session_shutdown')({ reason: 'quit' }, f.ctx);
@@ -70,6 +80,7 @@ test('non-TUI sessions do not resolve themes or start watchers', async () => {
 test('theme load failure preserves the current theme and warns once', async () => {
   const f = setup({ initial: 'light', missingTheme: 'light' });
   await f.events.get('session_start')({ reason: 'startup' }, f.ctx);
+  await settleScheduledStart();
   assert.deepEqual(f.applied, []);
   assert.deepEqual(f.notifications, [{ message: 'Unable to load Pi theme "light".', level: 'warning' }]);
 });
@@ -77,6 +88,7 @@ test('theme load failure preserves the current theme and warns once', async () =
 test('theme apply failure reports the Pi error once', async () => {
   const f = setup({ initial: 'dark', setThemeError: 'render failed' });
   await f.events.get('session_start')({ reason: 'startup' }, f.ctx);
+  await settleScheduledStart();
   assert.equal(f.applied[0], f.themes.dark);
   assert.deepEqual(f.notifications, [{
     message: 'Unable to apply Pi theme "dark": render failed',
