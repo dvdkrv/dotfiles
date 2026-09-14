@@ -60,6 +60,11 @@ test('pi settings load the pinned native Superpowers package exactly once', () =
   const settings = pkg('dot_pi/agent/settings.json.tmpl');
 
   assert.equal(
+    settings.theme,
+    'light/dark',
+    'Pi should track terminal appearance using the built-in automatic theme pair',
+  );
+  assert.equal(
     settings.packages.filter((source) => source === SUPERPOWERS_SOURCE).length,
     1,
     'settings should contain the pinned upstream package exactly once',
