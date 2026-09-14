@@ -7,14 +7,19 @@ mkdir -p "$(dirname "$STATE")"
 current=$(cat "$STATE" 2>/dev/null || echo "dark")
 
 # Use explicit argument if provided (dark|light), otherwise toggle
-if [[ "$1" == "dark" || "$1" == "light" ]]; then
+if [[ "${1:-}" == "dark" || "${1:-}" == "light" ]]; then
     next="$1"
 else
     next=$([[ "$current" == "dark" ]] && echo "light" || echo "dark")
 fi
 
+temporary=$(mktemp "${STATE}.tmp.XXXXXX")
+trap 'rm -f -- "$temporary"' EXIT
+printf '%s\n' "$next" > "$temporary"
+mv -f -- "$temporary" "$STATE"
+trap - EXIT
+
 [[ "$next" == "$current" ]] && exit 0
-echo "$next" > "$STATE"
 
 if [[ "$next" == "dark" ]]; then
   tmux set -g status-style 'bg=#1e1e2e,fg=#cdd6f4'

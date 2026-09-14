@@ -31,6 +31,37 @@ function writeExecutable(path, content) {
   writeFileSync(path, content, { mode: 0o755 });
 }
 
+const toggleThemeScript = new URL('../dot_local/bin/toggle-theme.sh', import.meta.url).pathname;
+const syncTerminalThemeScript = new URL('../dot_local/bin/sync-terminal-theme.sh', import.meta.url).pathname;
+
+function themeScriptHarness(clientTheme = 'light') {
+  const root = mkdtempSync(join(tmpdir(), 'dotfiles-theme-'));
+  const home = join(root, 'home');
+  const stateHome = join(root, 'state');
+  const bin = join(root, 'bin');
+  const localBin = join(home, '.local', 'bin');
+  const tmuxLog = join(root, 'tmux.log');
+  mkdirSync(stateHome, { recursive: true });
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(localBin, { recursive: true });
+  writeExecutable(join(localBin, 'toggle-theme.sh'), repositoryFile('dot_local/bin/toggle-theme.sh'));
+  writeExecutable(join(bin, 'tmux'), `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$TMUX_LOG"
+if [[ "$1" == "show-environment" ]]; then
+  printf 'LC_TERMINAL_THEME=%s\\n' "$TMUX_THEME"
+fi
+`);
+  const env = {
+    ...process.env,
+    HOME: home,
+    XDG_STATE_HOME: stateHome,
+    PATH: `${bin}:/usr/bin:/bin`,
+    TMUX_LOG: tmuxLog,
+    TMUX_THEME: clientTheme,
+  };
+  return { root, env, stateFile: join(stateHome, 'theme'), tmuxLog };
+}
+
 function moshAgentHarness() {
   const directory = mkdtempSync(join(tmpdir(), 'dotfiles-mosh-agent-'));
   const fakeMosh = join(directory, 'mosh');
@@ -394,6 +425,31 @@ test('zsh and tmux integrations are guarded and portable', () => {
   assert.match(tmux, /set -g set-clipboard on/);
   assert.match(tmux, /copy-to-clipboard\.sh/);
   assert.doesNotMatch(tmux, /"pbcopy"/);
+});
+
+test('toggle-theme creates canonical state even when explicit dark matches the default', () => {
+  const harness = themeScriptHarness('dark');
+  const result = spawnSync('/bin/bash', [toggleThemeScript, 'dark'], {
+    env: harness.env,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(harness.stateFile, 'utf8'), 'dark\n');
+  assert.match(repositoryFile('dot_local/bin/toggle-theme.sh'), /mktemp/);
+  assert.match(repositoryFile('dot_local/bin/toggle-theme.sh'), /mv .*"\$STATE"/);
+});
+
+test('client attachment creates missing canonical state even when dark matches the default', () => {
+  const harness = themeScriptHarness('dark');
+  const result = spawnSync('/bin/bash', [syncTerminalThemeScript], {
+    env: harness.env,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(harness.stateFile, 'utf8'), 'dark\n');
+  assert.match(readFileSync(harness.tmuxLog, 'utf8'), /show-environment LC_TERMINAL_THEME/);
 });
 
 test('tmux loads a Mosh-compatible OSC 52 clipboard capability', () => {
