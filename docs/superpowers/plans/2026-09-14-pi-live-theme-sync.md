@@ -584,7 +584,7 @@ Do not replace `ctx.ui.setTheme(selectedTheme)` with a string call. The object c
 
 ```bash
 node --test pi-theme-sync/tests/theme-sync.test.mjs
-npm run test --workspace pi-theme-sync
+npm --prefix pi-theme-sync test
 git diff --check
 ```
 
