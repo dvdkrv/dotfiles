@@ -29,7 +29,7 @@ export async function connectBackend(config: BrokerConfig, options: { initialize
     if (options.initialize && !(await kv.get('state'))) await kv.create('state', JSON.stringify(policy.newLedger(config.authorityId)));
     const stream = (await jsm.streams.info(STREAM)).config;
     const bucket = (await jsm.streams.info(`KV_${BUCKET}`)).config;
-    if (stream.storage !== StorageType.File || stream.retention !== RetentionPolicy.Limits || stream.discard !== DiscardPolicy.New || stream.max_age !== 0 || stream.max_msgs !== 2000 || stream.max_bytes !== 32 * 1024 * 1024 || stream.max_msg_size !== 65536 || stream.subjects?.join() !== 'pm.message.>' || bucket.storage !== StorageType.File || bucket.max_age !== 0 || bucket.max_msgs_per_subject !== 1) policy.fail('configuration', 'Unsafe or incompatible broker stream configuration');
+    if (stream.storage !== StorageType.File || stream.retention !== RetentionPolicy.Limits || stream.discard !== DiscardPolicy.New || stream.max_age !== 0 || stream.max_msgs !== 2000 || stream.max_bytes !== 32 * 1024 * 1024 || stream.max_msg_size !== 65536 || stream.max_consumers !== 512 || stream.subjects?.join() !== 'pm.message.>' || bucket.storage !== StorageType.File || bucket.max_age !== 0 || bucket.max_msgs_per_subject !== 1 || bucket.max_bytes !== 8 * 1024 * 1024 || bucket.max_msg_size !== 2 * 1024 * 1024) policy.fail('configuration', 'Unsafe or incompatible broker stream configuration');
     const backend = new NatsBackend(nc, js, jsm, kv, config.authorityId);
     await backend.snapshot();
     return backend;

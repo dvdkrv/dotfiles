@@ -119,20 +119,33 @@ async function stopChild(child: ChildProcess): Promise<void> {
 }
 
 async function waitForReady(agentDir: string, child: ChildProcess, timeoutMs: number, probeTimeoutMs: number): Promise<BrokerConfig> {
-  const failure = new Promise<never>((_, reject) => {
-    child.once('error', error => reject(new Error(`Could not spawn nats-server: ${safeText(error.message)}`)));
-    child.once('exit', code => reject(new Error(`nats-server exited (${code ?? 1}) before readiness`)));
-  });
-  const ready = (async () => {
+  let stopped = false;
+  let reportChildFailure!: (error: Error) => void;
+  const childFailure = new Promise<Error>(resolve => { reportChildFailure = resolve; });
+  const onError = (error: Error) => reportChildFailure(new Error(`Could not spawn nats-server: ${safeText(error.message)}`));
+  const onExit = (code: number | null) => reportChildFailure(new Error(`nats-server exited (${code ?? 1}) before readiness`));
+  child.once('error', onError);
+  child.once('exit', onExit);
+
+  const readiness = (async () => {
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
+    while (!stopped && Date.now() < deadline) {
       const config = readConfig(agentDir);
       if (await initializeOrProbe(agentDir, config, probeTimeoutMs) === 'ready') return readConfig(agentDir);
-      await delay(50);
+      if (!stopped) await delay(50);
     }
-    throw new Error('Messaging broker startup timed out');
+    throw new Error(stopped ? 'Messaging broker startup canceled' : 'Messaging broker startup timed out');
   })();
-  return Promise.race([ready, failure]);
+  const outcome = await Promise.race([
+    readiness.then(config => ({ kind: 'ready' as const, config }), error => ({ kind: 'readiness-failure' as const, error })),
+    childFailure.then(error => ({ kind: 'child-failure' as const, error })),
+  ]);
+  stopped = true;
+  child.off('error', onError);
+  child.off('exit', onExit);
+  if (outcome.kind === 'ready') return outcome.config;
+  if (outcome.kind === 'child-failure') await readiness.catch(() => {});
+  throw outcome.error;
 }
 
 function availableBeforeLock(config: BrokerConfig, timeoutMs: number): Promise<BrokerReadiness> {
@@ -165,13 +178,23 @@ export async function ensureBroker(options: EnsureBrokerOptions = {}): Promise<{
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const current = readConfig(agentDir);
       if (await availableBeforeLock(current, probeTimeoutMs) === 'ready') return { state: 'running', config: current };
-      privatePath(lock, false);
-      const stale = statSync(lock);
+      let stale;
+      try {
+        privatePath(lock, false);
+        stale = statSync(lock);
+      } catch (inspectionError) {
+        if ((inspectionError as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw inspectionError;
+      }
       if (Date.now() - stale.mtimeMs > startupTimeoutMs) {
         // Probe once more after establishing staleness, then only unlink the inode inspected.
         if (await availableBeforeLock(readConfig(agentDir), probeTimeoutMs) === 'ready') return { state: 'running', config: readConfig(agentDir) };
-        const currentLock = lstatSync(lock);
-        if (currentLock.dev === stale.dev && currentLock.ino === stale.ino) unlinkSync(lock);
+        try {
+          const currentLock = lstatSync(lock);
+          if (currentLock.dev === stale.dev && currentLock.ino === stale.ino) unlinkSync(lock);
+        } catch (inspectionError) {
+          if ((inspectionError as NodeJS.ErrnoException).code !== 'ENOENT') throw inspectionError;
+        }
         continue;
       }
       if (Date.now() >= deadline) fail('busy', 'Messaging broker startup is already in progress');

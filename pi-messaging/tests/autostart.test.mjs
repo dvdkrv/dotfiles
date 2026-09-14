@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { chmod, lstat, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, rm, stat, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:net';
+import { connect } from '@nats-io/transport-node';
+import { jetstreamManager } from '@nats-io/jetstream';
 import { createJiti } from 'jiti';
 import { freePort } from './helpers/broker.mjs';
 
@@ -195,4 +198,68 @@ test('a stale private startup lock is reclaimed only after an unavailable probe'
   const result = await ensureBroker({ agentDir: f.root, binary, port: f.port, startupTimeoutMs: 1000 });
   assert.equal(result.state, 'started');
   await assert.rejects(lstat(lock), /ENOENT/);
+});
+
+test('readiness stops after child failure and cannot initialize after lock release', { timeout: 15_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t); const config = prepareConfig(f.root, f.port);
+  const before = await configBytes(f.root); const serverFile = writeServerConfig(f.root, config);
+  const failingBinary = join(f.root, 'fail-after-start');
+  await writeFile(failingBinary, '#!/bin/sh\nsleep 0.2\nexit 1\n', { mode: 0o700 });
+  await assert.rejects(
+    ensureBroker({ agentDir: f.root, binary: failingBinary, port: f.port, probeTimeoutMs: 100, startupTimeoutMs: 1500 }),
+    /exited.*before readiness/i,
+  );
+  await assert.rejects(lstat(join(f.root, 'messaging', 'startup.lock')), /ENOENT/);
+
+  const rawProcessFile = join(f.root, 'messaging', 'raw-broker-process.json');
+  const child = await startRawBroker(t, serverFile, rawProcessFile, false);
+  await writeFile(rawProcessFile, JSON.stringify({ pid: child.pid }), { mode: 0o600 }); f.trackChild(child, rawProcessFile);
+  await new Promise(resolve => setTimeout(resolve, 350));
+  await assertConfigUnchanged(f.root, before);
+  assert.equal(readConfig(f.root).initialized, false);
+});
+
+test('waiter retries when startup lock disappears during its probe', { timeout: 15_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const f = await isolatedRoot(t); prepareConfig(f.root, f.port);
+  const lock = join(f.root, 'messaging', 'startup.lock');
+  await writeFile(lock, JSON.stringify({ pid: 999999, createdAt: Date.now() }), { mode: 0o600 });
+
+  const sockets = new Set(); let connections = 0; let released = false;
+  const blocker = createServer(socket => {
+    sockets.add(socket); socket.on('close', () => sockets.delete(socket));
+    connections++;
+    if (connections === 2) {
+      setTimeout(() => { void unlink(lock).then(() => { released = true; }); }, 75);
+      setTimeout(() => { blocker.close(); }, 100);
+    }
+  });
+  blocker.listen(f.port, '127.0.0.1'); await once(blocker, 'listening');
+  t.after(async () => {
+    for (const socket of sockets) socket.destroy();
+    if (blocker.listening) await new Promise(resolve => blocker.close(resolve));
+  });
+
+  const result = await ensureBroker({ agentDir: f.root, binary, port: f.port, probeTimeoutMs: 200, startupTimeoutMs: 3000 });
+  assert.equal(released, true);
+  assert.equal(result.state, 'started');
+});
+
+test('probe rejects relaxed configured stream resource limits', { timeout: 30_000 }, async t => {
+  if (!requireBroker(t)) return;
+  const cases = [
+    ['message max consumers', 'PM_MESSAGES', { max_consumers: 513 }],
+    ['KV maximum bytes', 'KV_PM_CONTROL', { max_bytes: 16 * 1024 * 1024 }],
+    ['KV maximum value size', 'KV_PM_CONTROL', { max_msg_size: 3 * 1024 * 1024 }],
+  ];
+  for (const [name, stream, update] of cases) await t.test(name, async t => {
+    const f = await isolatedRoot(t); const foreground = await runBroker(f.root, binary, f.port);
+    t.after(() => foreground.stop());
+    const config = readConfig(f.root);
+    const nc = await connect({ servers: config.server, token: config.token, reconnect: false });
+    try { await (await jetstreamManager(nc)).streams.update(stream, update); }
+    finally { await nc.close(); }
+    await assert.rejects(probeBroker(config), /Unsafe or incompatible broker stream configuration/i);
+  });
 });
