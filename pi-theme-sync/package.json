@@ -1,0 +1,23 @@
+{
+  "name": "pi-theme-sync",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "keywords": [
+    "pi-package",
+    "theme"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "jiti": "2.7.0"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/theme-sync.ts"
+    ]
+  }
+}
