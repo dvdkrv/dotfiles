@@ -16,6 +16,7 @@ test('local pi extension packages declare runtime peer dependencies they import'
     'pi-loop-package/package.json': ['@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', 'typebox'],
     'pi-claude-bridge/package.json': ['@earendil-works/pi-coding-agent', '@earendil-works/pi-tui'],
     'pi-messaging/package.json': ['@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', '@earendil-works/pi-tui', 'typebox'],
+    'pi-theme-sync/package.json': ['@earendil-works/pi-coding-agent'],
   };
 
   for (const [path, deps] of Object.entries(expected)) {
@@ -44,6 +45,7 @@ test('packages with TypeScript-importing tests pin jiti as a dev dependency', ()
     'pi-loop-package/package.json',
     'pi-claude-bridge/package.json',
     'pi-messaging/package.json',
+    'pi-theme-sync/package.json',
   ]) {
     const devDeps = pkg(path).devDependencies ?? {};
     assert.equal(devDeps.jiti, '2.7.0', `${path} should pin jiti for tests that import TypeScript`);
@@ -74,6 +76,11 @@ test('pi settings load the pinned native Superpowers package exactly once', () =
     false,
     'settings should not load the removed local port',
   );
+  assert.equal(
+    settings.packages.some((source) => source.endsWith('/pi-theme-sync')),
+    true,
+    'Pi settings should load the managed live theme package',
+  );
 });
 
 test('pi package installer separates local npm packages from managed git packages', () => {
@@ -94,6 +101,7 @@ test('pi package installer separates local npm packages from managed git package
     /pi install "\$SUPERPOWERS_PACKAGE"/,
     'installer should reconcile the configured git package even when pi list already reports it',
   );
+  assert.match(script, /pi-theme-sync/, 'installer should include the live theme package');
 
   const npmLoop = script.match(/for pkg in "\$\{LOCAL_PACKAGES\[@\]\}"; do([\s\S]*?)done/)?.[1] ?? '';
   assert.doesNotMatch(npmLoop, /superpowers/, 'upstream git source must not be passed to npm --prefix');
@@ -116,6 +124,7 @@ test('root workspace defines reproducible aggregate validation', () => {
     'pi-loop-package',
     'pi-claude-bridge',
     'pi-messaging',
+    'pi-theme-sync',
   ]);
   for (const script of ['test', 'typecheck', 'lint:shell', 'check']) {
     assert.equal(typeof root.scripts?.[script], 'string', `root should define npm run ${script}`);
@@ -132,6 +141,7 @@ test('every local Pi package has a runnable test script', () => {
     'pi-loop-package/package.json',
     'pi-claude-bridge/package.json',
     'pi-messaging/package.json',
+    'pi-theme-sync/package.json',
   ]) {
     assert.equal(pkg(path).scripts?.test, 'node --test tests/*.test.mjs', `${path} should run Node tests`);
   }

@@ -73,6 +73,14 @@ For a light terminal, both theme values should be `light`. Inside Neovim, run:
 
 The expected values are `light`, `background=light`, and `catppuccin-latte` (`dark`, `background=dark`, and `catppuccin-mocha` in dark mode).
 
+Pi follows the same account-wide state after the theme-sync package is installed. Existing Pi processes need one human-controlled `/reload`; subsequent `prefix+T` or client-attachment changes update them live. Verify the canonical state without querying terminal OSC support:
+
+```bash
+cat "${XDG_STATE_HOME:-$HOME/.local/state}/theme"
+```
+
+The output should be exactly `light` or `dark` and should match tmux and Pi.
+
 ### Verify clipboard forwarding over Mosh
 
 Apply the updated dotfiles on both the local and remote machines. End the existing Mosh connection, reconnect normally, attach tmux, and reload its configuration:

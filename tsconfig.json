@@ -16,6 +16,8 @@
     "pi-worktree-core/src/**/*.ts",
     "pi-worktree-manager/extensions/**/*.ts",
     "pi-messaging/extensions/**/*.ts",
-    "pi-messaging/src/**/*.ts"
+    "pi-messaging/src/**/*.ts",
+    "pi-theme-sync/extensions/**/*.ts",
+    "pi-theme-sync/src/**/*.ts"
   ]
 }
