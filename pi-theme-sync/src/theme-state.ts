@@ -68,6 +68,7 @@ export function watchAppearance(
 		onAppearance(nextAppearance);
 	};
 	dependencies.watch(path, listener);
+	listener();
 	return () => {
 		if (closed) return;
 		closed = true;

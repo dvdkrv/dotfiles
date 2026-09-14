@@ -24,6 +24,19 @@ test('initial appearance prefers state then environment then dark', () => {
   assert.equal(state.resolveInitialAppearance('/state', { LC_TERMINAL_THEME: 'sepia' }, () => 'invalid'), 'dark');
 });
 
+test('watcher catches a state change that landed before registration', () => {
+  const changes = [];
+  const dependencies = {
+    read: () => 'dark\n',
+    watch() {},
+    unwatch() {},
+  };
+
+  state.watchAppearance('/state/theme', 'light', value => changes.push(value), dependencies);
+
+  assert.deepEqual(changes, ['dark']);
+});
+
 test('watcher emits valid changes once and cleanup unregisters its listener', () => {
   let value = 'light\n';
   let listener;
