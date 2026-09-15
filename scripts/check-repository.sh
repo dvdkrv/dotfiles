@@ -16,7 +16,7 @@ done
 make check
 
 managed="$(chezmoi --config "$chezmoi_config" --source "$repo" managed --path-style source-absolute)"
-for root in README.md package.json package-lock.json tsconfig.json docs tests scripts pi-claude-bridge pi-loop-package pi-task pi-theme-sync pi-worktree-core pi-worktree-manager; do
+for root in README.md package.json package-lock.json docs tests scripts; do
   if grep -Fq -- "$repo/$root" <<<"$managed"; then
     echo "Repository-only source is managed by chezmoi: $root" >&2
     exit 1

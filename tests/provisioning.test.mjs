@@ -163,8 +163,9 @@ test('chezmoi excludes repository-only roots from the home target state', () => 
   assert.match(ignore, /^docs\/$/m);
   assert.match(ignore, /^tests\/$/m);
   assert.match(ignore, /^scripts\/$/m);
-  assert.match(ignore, /^pi-\*\/$/m);
-  for (const file of ['README.md', 'package.json', 'package-lock.json', 'tsconfig.json']) {
+  assert.doesNotMatch(ignore, /^pi-\*\/$/m);
+  assert.doesNotMatch(ignore, /^tsconfig\.json$/m);
+  for (const file of ['README.md', 'package.json', 'package-lock.json']) {
     assert.match(ignore, new RegExp(`^${file.replace('.', '\\.')}$`, 'm'));
   }
   assert.match(ignore, /\{\{ if \(index \. "work"\) -\}\}/);

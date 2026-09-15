@@ -9,54 +9,18 @@ function pkg(path) {
 const PI_TOOLS_SOURCE = 'git:git@github.com:dvdkrv/pi-tools.git@v0.1.1';
 const SUPERPOWERS_SOURCE = 'git:github.com/obra/superpowers@v6.2.0';
 
-test('local pi extension packages declare runtime peer dependencies they import', () => {
-  const expected = {
-    'pi-worktree-core/package.json': ['@earendil-works/pi-coding-agent', '@earendil-works/pi-tui'],
-    'pi-worktree-manager/package.json': ['@earendil-works/pi-coding-agent', '@earendil-works/pi-tui'],
-    'pi-task/package.json': ['@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', '@earendil-works/pi-tui', 'typebox'],
-    'pi-loop-package/package.json': ['@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', 'typebox'],
-    'pi-claude-bridge/package.json': ['@earendil-works/pi-coding-agent', '@earendil-works/pi-tui'],
-    'pi-messaging/package.json': ['@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', '@earendil-works/pi-tui', 'typebox'],
-    'pi-theme-sync/package.json': ['@earendil-works/pi-coding-agent'],
-  };
-
-  for (const [path, deps] of Object.entries(expected)) {
-    const peers = pkg(path).peerDependencies ?? {};
-    for (const dep of deps) {
-      assert.equal(peers[dep], '*', `${path} should declare ${dep} as a peerDependency`);
-    }
-  }
-});
-
-test('Pi worktree consumers declare the shared core package explicitly', () => {
-  for (const path of [
-    'pi-worktree-manager/package.json',
-    'pi-task/package.json',
-    'pi-claude-bridge/package.json',
-  ]) {
-    assert.equal(pkg(path).dependencies?.['pi-worktree-core'], 'file:../pi-worktree-core');
-  }
-});
-
-test('packages with TypeScript-importing tests pin jiti as a dev dependency', () => {
-  for (const path of [
-    'pi-worktree-core/package.json',
-    'pi-worktree-manager/package.json',
-    'pi-task/package.json',
-    'pi-loop-package/package.json',
-    'pi-claude-bridge/package.json',
-    'pi-messaging/package.json',
-    'pi-theme-sync/package.json',
-  ]) {
-    const devDeps = pkg(path).devDependencies ?? {};
-    assert.equal(devDeps.jiti, '2.7.0', `${path} should pin jiti for tests that import TypeScript`);
-  }
-});
-
-test('package-local node_modules directories are ignored', () => {
-  const gitignore = readFileSync('.gitignore', 'utf8');
-
-  assert.match(gitignore, /^node_modules\/$/m, 'package dependency installs should not dirty git with node_modules');
+test('extracted Pi implementation and TypeScript workspace are absent', () => {
+  const extracted = [
+    'pi-claude-bridge',
+    'pi-loop-package',
+    'pi-messaging',
+    'pi-task',
+    'pi-theme-sync',
+    'pi-worktree-core',
+    'pi-worktree-manager',
+  ];
+  for (const path of extracted) assert.equal(existsSync(path), false, `${path} should be extracted`);
+  assert.equal(existsSync('tsconfig.json'), false, 'root TypeScript configuration should be extracted');
 });
 
 test('pi settings load the signed Pi tools release and pinned Superpowers exactly once', () => {
@@ -73,11 +37,6 @@ test('pi settings load the signed Pi tools release and pinned Superpowers exactl
     settings.packages.some((source) => /pi-(worktree|task|loop|claude|messaging|theme)(?:\/|$)/.test(source)),
     false,
     'settings should not load local Pi implementation packages',
-  );
-  assert.equal(
-    settings.packages.some((source) => source.includes('pi-superpowers-package')),
-    false,
-    'settings should not load the removed local port',
   );
 });
 
@@ -97,48 +56,39 @@ test('shell environment disables optional Superpowers visual telemetry', () => {
   assert.match(shell, /^export SUPERPOWERS_DISABLE_TELEMETRY=1$/m);
 });
 
-test('root workspace defines reproducible aggregate validation', () => {
+test('root package is configuration-only and reproducible', () => {
   assert.equal(existsSync('package-lock.json'), true, 'root package lock should be committed');
   const root = pkg('package.json');
 
-  assert.deepEqual(root.workspaces, [
-    'pi-worktree-core',
-    'pi-worktree-manager',
-    'pi-task',
-    'pi-loop-package',
-    'pi-claude-bridge',
-    'pi-messaging',
-    'pi-theme-sync',
-  ]);
-  for (const script of ['test', 'typecheck', 'lint:shell', 'check']) {
+  assert.equal(root.workspaces, undefined);
+  assert.equal(root.overrides, undefined);
+  assert.equal(root.scripts?.test, 'node --test tests/*.test.mjs');
+  assert.equal(root.scripts?.typecheck, undefined);
+  for (const dependency of [
+    '@earendil-works/pi-ai',
+    '@earendil-works/pi-coding-agent',
+    '@earendil-works/pi-tui',
+    '@types/node',
+    'jiti',
+    'typebox',
+    'typescript',
+  ]) {
+    assert.equal(root.devDependencies?.[dependency], undefined, `${dependency} should not remain in dotfiles`);
+  }
+  for (const script of ['test', 'lint:shell', 'check']) {
     assert.equal(typeof root.scripts?.[script], 'string', `root should define npm run ${script}`);
   }
-  assert.match(root.devDependencies?.jiti ?? '', /^\d+\.\d+\.\d+$/);
-  assert.match(root.devDependencies?.typescript ?? '', /^\d+\.\d+\.\d+$/);
 });
 
-test('every local Pi package has a runnable test script', () => {
-  for (const path of [
-    'pi-worktree-core/package.json',
-    'pi-worktree-manager/package.json',
-    'pi-task/package.json',
-    'pi-loop-package/package.json',
-    'pi-claude-bridge/package.json',
-    'pi-messaging/package.json',
-    'pi-theme-sync/package.json',
-  ]) {
-    assert.equal(pkg(path).scripts?.test, 'node --test tests/*.test.mjs', `${path} should run Node tests`);
-  }
-});
-
-test('CI runs clean-install tests typechecking and repository checks', () => {
+test('CI validates configuration without Pi package infrastructure', () => {
   const workflow = readFileSync('.github/workflows/check.yml', 'utf8');
 
   assert.match(workflow, /actions\/checkout@v5/);
   assert.match(workflow, /actions\/setup-node@v5/);
-  for (const command of ['npm ci', 'npm test', 'npm run typecheck', 'npm run lint:shell', 'npm run check']) {
+  for (const command of ['npm ci --ignore-scripts', 'npm test', 'npm run lint:shell', 'npm run check']) {
     assert.match(workflow, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
+  assert.doesNotMatch(workflow, /nats-server|PI_MESSAGING_REQUIRE_BROKER|messaging-minimum-runtime|npm run typecheck/);
 });
 
 test('README documents canonical installation and delegation safety', () => {
