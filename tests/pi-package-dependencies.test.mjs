@@ -6,6 +6,7 @@ function pkg(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+const PI_TOOLS_SOURCE = 'git:git@github.com/dvdkrv/pi-tools.git@v0.1.0';
 const SUPERPOWERS_SOURCE = 'git:github.com/obra/superpowers@v6.2.0';
 
 test('local pi extension packages declare runtime peer dependencies they import', () => {
@@ -58,7 +59,7 @@ test('package-local node_modules directories are ignored', () => {
   assert.match(gitignore, /^node_modules\/$/m, 'package dependency installs should not dirty git with node_modules');
 });
 
-test('pi settings load the pinned native Superpowers package exactly once', () => {
+test('pi settings load the signed Pi tools release and pinned Superpowers exactly once', () => {
   const settings = pkg('dot_pi/agent/settings.json.tmpl');
 
   assert.equal(
@@ -66,45 +67,28 @@ test('pi settings load the pinned native Superpowers package exactly once', () =
     'light/dark',
     'Pi should track terminal appearance using the built-in automatic theme pair',
   );
+  assert.equal(settings.packages.filter((source) => source === PI_TOOLS_SOURCE).length, 1);
+  assert.equal(settings.packages.filter((source) => source === SUPERPOWERS_SOURCE).length, 1);
   assert.equal(
-    settings.packages.filter((source) => source === SUPERPOWERS_SOURCE).length,
-    1,
-    'settings should contain the pinned upstream package exactly once',
+    settings.packages.some((source) => /pi-(worktree|task|loop|claude|messaging|theme)(?:\/|$)/.test(source)),
+    false,
+    'settings should not load local Pi implementation packages',
   );
   assert.equal(
     settings.packages.some((source) => source.includes('pi-superpowers-package')),
     false,
     'settings should not load the removed local port',
   );
-  assert.equal(
-    settings.packages.some((source) => source.endsWith('/pi-theme-sync')),
-    true,
-    'Pi settings should load the managed live theme package',
-  );
 });
 
-test('pi package installer separates local npm packages from managed git packages', () => {
+test('pi package installer reconciles only signed git packages', () => {
   const script = readFileSync('run_onchange_after_06-install-pi-packages.sh.tmpl', 'utf8');
 
-  assert.match(script, /LOCAL_PACKAGES=\(/, 'installer should declare local packages separately');
-  assert.match(
-    script,
-    /SUPERPOWERS_PACKAGE="git:github\.com\/obra\/superpowers@v6\.2\.0"/,
-    'installer should declare pinned upstream Superpowers separately',
-  );
-  assert.match(script, /npm install --omit=dev/, 'installer should install local package dependencies');
-  assert.match(script, /--package-lock=false/, 'installer should avoid package-lock files');
-  assert.match(script, /--legacy-peer-deps/, 'installer should use Pi-bundled peer dependencies');
-  assert.match(script, /for pkg in "\$\{LOCAL_PACKAGES\[@\]\}"/, 'local loops should only receive local package paths');
-  assert.match(
-    script,
-    /pi install "\$SUPERPOWERS_PACKAGE"/,
-    'installer should reconcile the configured git package even when pi list already reports it',
-  );
-  assert.match(script, /pi-theme-sync/, 'installer should include the live theme package');
-
-  const npmLoop = script.match(/for pkg in "\$\{LOCAL_PACKAGES\[@\]\}"; do([\s\S]*?)done/)?.[1] ?? '';
-  assert.doesNotMatch(npmLoop, /superpowers/, 'upstream git source must not be passed to npm --prefix');
+  assert.match(script, /PI_TOOLS_PACKAGE="git:git@github\.com\/dvdkrv\/pi-tools\.git@v0\.1\.0"/);
+  assert.match(script, /SUPERPOWERS_PACKAGE="git:github\.com\/obra\/superpowers@v6\.2\.0"/);
+  assert.match(script, /pi install "\$PI_TOOLS_PACKAGE"/);
+  assert.match(script, /pi install "\$SUPERPOWERS_PACKAGE"/);
+  assert.doesNotMatch(script, /LOCAL_PACKAGES|npm install --omit=dev|--prefix "\$pkg"/);
 });
 
 test('shell environment disables optional Superpowers visual telemetry', () => {

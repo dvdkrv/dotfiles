@@ -1,34 +1,12 @@
 #!/usr/bin/env bash
-# Install pi packages declared here. Re-runs whenever this script changes
-# (chezmoi onchange). Idempotent: reconciles local and pinned git packages.
+# Reconcile immutable Pi package releases whenever this script changes.
 set -euo pipefail
 
 command -v pi >/dev/null 2>&1 || { echo "pi is required to install Pi packages" >&2; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo "npm is required to install Pi package dependencies" >&2; exit 1; }
 
-LOCAL_PACKAGES=(
-  "{{ .chezmoi.sourceDir }}/pi-worktree-core"
-  "{{ .chezmoi.sourceDir }}/pi-worktree-manager"
-  "{{ .chezmoi.sourceDir }}/pi-task"
-  "{{ .chezmoi.sourceDir }}/pi-loop-package"
-  "{{ .chezmoi.sourceDir }}/pi-claude-bridge"
-  "{{ .chezmoi.sourceDir }}/pi-messaging"
-  "{{ .chezmoi.sourceDir }}/pi-theme-sync"
-)
-
+PI_TOOLS_PACKAGE="git:git@github.com/dvdkrv/pi-tools.git@v0.1.0"
 SUPERPOWERS_PACKAGE="git:github.com/obra/superpowers@v6.2.0"
 
-for pkg in "${LOCAL_PACKAGES[@]}"; do
-  npm install --omit=dev --package-lock=false --ignore-scripts --legacy-peer-deps --prefix "$pkg"
-done
-
-installed="$(pi list)"
-for pkg in "${LOCAL_PACKAGES[@]}"; do
-  if ! grep -Fq -- "$pkg" <<<"$installed"; then
-    pi install "$pkg"
-  fi
-done
-
-# pi list includes configured git sources even when their clones are absent, so
-# always let pi install reconcile the immutable pinned package.
+pi install "$PI_TOOLS_PACKAGE"
 pi install "$SUPERPOWERS_PACKAGE"

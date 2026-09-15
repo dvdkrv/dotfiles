@@ -29,9 +29,9 @@ SSH configuration is managed through one validated marker block. Unbalanced mark
 
 ## Pi peer messaging
 
-The local [`pi-messaging`](pi-messaging/README.md) package lets explicitly joined Pi sessions exchange messages. A human-armed group allowance bounds automatic handoffs; agents cannot re-arm it. It requires one explicitly started, private loopback NATS broker. Loading the package alone does not start a service or opt a session into messaging.
+The signed [`pi-tools`](https://github.com/dvdkrv/pi-tools) `v0.1.0` release lets explicitly joined Pi sessions exchange messages. A human-armed group allowance bounds automatic handoffs; agents cannot re-arm it. The package may ensure its private loopback NATS broker is ready, but loading it never joins, resumes, arms, delivers, reads pending bodies, or invokes a model.
 
-See its README for setup, recovery limitations, and deterministic/cheap-model test commands.
+See the package README for setup, lifecycle recovery, and isolated no-inference test commands.
 
 ## Development
 
