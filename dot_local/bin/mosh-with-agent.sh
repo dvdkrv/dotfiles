@@ -113,6 +113,8 @@ stop_sidecar() {
   wait "$pid" 2>/dev/null || true
 }
 
+# ShellCheck 0.9 does not recognize functions reachable only through a trap callback.
+# shellcheck disable=SC2317
 cleanup() {
   local pid
 
@@ -129,6 +131,7 @@ cleanup() {
   rm -f "$ready_file" "$diagnostic_file"
 }
 
+# shellcheck disable=SC2317
 on_exit() {
   local status=$?
   trap - EXIT INT TERM HUP
