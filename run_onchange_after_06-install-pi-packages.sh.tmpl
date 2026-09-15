@@ -5,7 +5,7 @@ set -euo pipefail
 command -v pi >/dev/null 2>&1 || { echo "pi is required to install Pi packages" >&2; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo "npm is required to install Pi package dependencies" >&2; exit 1; }
 
-PI_TOOLS_PACKAGE="git:git@github.com/dvdkrv/pi-tools.git@v0.1.0"
+PI_TOOLS_PACKAGE="git:git@github.com:dvdkrv/pi-tools.git@v0.1.1"
 SUPERPOWERS_PACKAGE="git:github.com/obra/superpowers@v6.2.0"
 
 pi install "$PI_TOOLS_PACKAGE"

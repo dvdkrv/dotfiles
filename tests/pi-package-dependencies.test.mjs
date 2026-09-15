@@ -6,7 +6,7 @@ function pkg(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-const PI_TOOLS_SOURCE = 'git:git@github.com/dvdkrv/pi-tools.git@v0.1.0';
+const PI_TOOLS_SOURCE = 'git:git@github.com:dvdkrv/pi-tools.git@v0.1.1';
 const SUPERPOWERS_SOURCE = 'git:github.com/obra/superpowers@v6.2.0';
 
 test('local pi extension packages declare runtime peer dependencies they import', () => {
@@ -84,7 +84,7 @@ test('pi settings load the signed Pi tools release and pinned Superpowers exactl
 test('pi package installer reconciles only signed git packages', () => {
   const script = readFileSync('run_onchange_after_06-install-pi-packages.sh.tmpl', 'utf8');
 
-  assert.match(script, /PI_TOOLS_PACKAGE="git:git@github\.com\/dvdkrv\/pi-tools\.git@v0\.1\.0"/);
+  assert.match(script, /PI_TOOLS_PACKAGE="git:git@github\.com:dvdkrv\/pi-tools\.git@v0\.1\.1"/);
   assert.match(script, /SUPERPOWERS_PACKAGE="git:github\.com\/obra\/superpowers@v6\.2\.0"/);
   assert.match(script, /pi install "\$PI_TOOLS_PACKAGE"/);
   assert.match(script, /pi install "\$SUPERPOWERS_PACKAGE"/);
