@@ -178,7 +178,7 @@ else
   tmux set -g status-right '#[fg=#1e66f5]%H:%M #[fg=#4c4f69]| #[fg=#df8e1d]%Y-%m-%d '
   tmux set -g window-status-format '#[fg=#acb0be] #I:#W '
   tmux set -g window-status-current-format '#[bg=#ccd0da,fg=#40a02b,bold] #I:#W '
-  tmux set -g pane-border-style 'fg=#eff1f5'
+  tmux set -g pane-border-style 'fg=#acb0be'
   tmux set -g pane-active-border-style 'fg=#40a02b'
 fi
 
@@ -271,6 +271,7 @@ test('tmux native client theme hooks publish light and dark canonical state', ()
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(harness.stateFile, 'utf8'), 'light\n');
     assert.match(harness.run('show-options', '-gv', 'status-style').stdout, /#eff1f5/);
+    assert.match(harness.run('show-options', '-gv', 'pane-border-style').stdout, /#acb0be/);
 
     result = harness.run('set-hook', '-gR', 'client-dark-theme');
     assert.equal(result.status, 0, result.stderr);

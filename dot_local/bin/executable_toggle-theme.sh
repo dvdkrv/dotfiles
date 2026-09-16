@@ -39,7 +39,7 @@ else
   tmux set -g status-right '#[fg=#1e66f5]%H:%M #[fg=#4c4f69]| #[fg=#df8e1d]%Y-%m-%d '
   tmux set -g window-status-format '#[fg=#acb0be] #I:#W '
   tmux set -g window-status-current-format '#[bg=#ccd0da,fg=#40a02b,bold] #I:#W '
-  tmux set -g pane-border-style 'fg=#eff1f5'
+  tmux set -g pane-border-style 'fg=#acb0be'
   tmux set -g pane-active-border-style 'fg=#40a02b'
 fi
 

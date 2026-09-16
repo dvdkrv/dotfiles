@@ -315,6 +315,7 @@ test('tmux native client theme hooks publish light and dark canonical state', ()
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(harness.stateFile, 'utf8'), 'light\n');
     assert.match(harness.run('show-options', '-gv', 'status-style').stdout, /#eff1f5/);
+    assert.match(harness.run('show-options', '-gv', 'pane-border-style').stdout, /#acb0be/);
 
     result = harness.run('set-hook', '-gR', 'client-dark-theme');
     assert.equal(result.status, 0, result.stderr);
