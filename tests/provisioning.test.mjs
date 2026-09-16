@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -50,6 +50,9 @@ printf '%s\\n' "$*" >> "$TMUX_LOG"
 if [[ "$1" == "show-environment" ]]; then
   printf 'LC_TERMINAL_THEME=%s\\n' "$TMUX_THEME"
 fi
+if [[ -n "\${TMUX_FAIL_MATCH:-}" && "$*" == *"$TMUX_FAIL_MATCH"* ]]; then
+  exit 71
+fi
 `);
   const env = {
     ...process.env,
@@ -58,8 +61,9 @@ fi
     PATH: `${bin}:/usr/bin:/bin`,
     TMUX_LOG: tmuxLog,
     TMUX_THEME: clientTheme,
+    TMUX_FAIL_MATCH: '',
   };
-  return { root, env, stateFile: join(stateHome, 'theme'), tmuxLog };
+  return { root, stateHome, env, stateFile: join(stateHome, 'theme'), tmuxLog };
 }
 
 function moshAgentHarness() {
@@ -439,6 +443,48 @@ test('toggle-theme creates canonical state even when explicit dark matches the d
   assert.equal(readFileSync(harness.stateFile, 'utf8'), 'dark\n');
   assert.match(repositoryFile('dot_local/bin/executable_toggle-theme.sh'), /mktemp/);
   assert.match(repositoryFile('dot_local/bin/executable_toggle-theme.sh'), /mv .*"\$STATE"/);
+});
+
+test('explicit theme reapplies the complete palette when canonical state already matches', () => {
+  const harness = themeScriptHarness('light');
+  writeFileSync(harness.stateFile, 'light\n');
+  const result = spawnSync('/bin/bash', [toggleThemeScript, 'light'], {
+    env: harness.env,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const commands = readFileSync(harness.tmuxLog, 'utf8');
+  for (const option of ['status-style', 'status-left', 'status-right', 'window-status-format', 'window-status-current-format', 'pane-border-style', 'pane-active-border-style']) {
+    assert.match(commands, new RegExp(`set -g ${option}`));
+  }
+  assert.equal(readFileSync(harness.stateFile, 'utf8'), 'light\n');
+});
+
+test('invalid explicit theme changes neither canonical state nor tmux', () => {
+  const harness = themeScriptHarness('dark');
+  writeFileSync(harness.stateFile, 'dark\n');
+  const result = spawnSync('/bin/bash', [toggleThemeScript, 'sepia'], {
+    env: harness.env,
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(readFileSync(harness.stateFile, 'utf8'), 'dark\n');
+  assert.equal(existsSync(harness.tmuxLog), false);
+});
+
+test('failed tmux palette does not publish a new canonical theme', () => {
+  const harness = themeScriptHarness('dark');
+  writeFileSync(harness.stateFile, 'dark\n');
+  const result = spawnSync('/bin/bash', [toggleThemeScript, 'light'], {
+    env: { ...harness.env, TMUX_FAIL_MATCH: 'status-right' },
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(readFileSync(harness.stateFile, 'utf8'), 'dark\n');
+  assert.deepEqual(readdirSync(harness.stateHome).sort(), ['theme']);
 });
 
 test('client attachment creates missing canonical state even when dark matches the default', () => {

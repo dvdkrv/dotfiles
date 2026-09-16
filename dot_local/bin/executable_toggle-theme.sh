@@ -1,27 +1,31 @@
 #!/usr/bin/env bash
-# Toggle tmux between Catppuccin Mocha (dark) and Latte (light)
+set -euo pipefail
 
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/theme"
 mkdir -p "$(dirname "$STATE")"
+current="$(cat "$STATE" 2>/dev/null || printf '%s\n' dark)"
+[[ "$current" == light || "$current" == dark ]] || current=dark
 
-current=$(cat "$STATE" 2>/dev/null || echo "dark")
-
-# Use explicit argument if provided (dark|light), otherwise toggle
-if [[ "${1:-}" == "dark" || "${1:-}" == "light" ]]; then
+case "$#" in
+  0) [[ "$current" == dark ]] && next=light || next=dark ;;
+  1)
+    [[ "$1" == light || "$1" == dark ]] || {
+      printf 'theme must be light or dark\n' >&2
+      exit 2
+    }
     next="$1"
-else
-    next=$([[ "$current" == "dark" ]] && echo "light" || echo "dark")
-fi
+    ;;
+  *)
+    printf 'usage: %s [light|dark]\n' "${0##*/}" >&2
+    exit 2
+    ;;
+esac
 
-temporary=$(mktemp "${STATE}.tmp.XXXXXX")
+temporary="$(mktemp "${STATE}.tmp.XXXXXX")"
 trap 'rm -f -- "$temporary"' EXIT
-printf '%s\n' "$next" > "$temporary"
-mv -f -- "$temporary" "$STATE"
-trap - EXIT
+printf '%s\n' "$next" >"$temporary"
 
-[[ "$next" == "$current" ]] && exit 0
-
-if [[ "$next" == "dark" ]]; then
+if [[ "$next" == dark ]]; then
   tmux set -g status-style 'bg=#1e1e2e,fg=#cdd6f4'
   tmux set -g status-left '#[bg=#a6e3a1,fg=#1e1e2e,bold] #S #[bg=#1e1e2e] '
   tmux set -g status-right '#[fg=#89b4fa]%H:%M #[fg=#cdd6f4]| #[fg=#f9e2af]%Y-%m-%d '
@@ -39,4 +43,6 @@ else
   tmux set -g pane-active-border-style 'fg=#40a02b'
 fi
 
-tmux display-message "Theme: $next"
+mv -f -- "$temporary" "$STATE"
+trap - EXIT
+tmux display-message "Theme: $next" || true
