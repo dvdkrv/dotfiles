@@ -1,6 +1,6 @@
 # Direct SSH Live Theme Synchronization Design
 
-**Date:** 2026-09-16  
+**Date:** 2026-09-16
 **Status:** Approved design, pending implementation plan
 
 ## Purpose
