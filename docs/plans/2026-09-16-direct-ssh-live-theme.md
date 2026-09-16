@@ -727,14 +727,17 @@ root="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-direct-ssh.XXXXXX")"
 trap 'rm -rf "$root"' EXIT
 mkdir -p "$root/home"
 : >"$root/chezmoi.toml"
+toggle_target="$root/home/.local/bin/toggle-theme.sh"
+sync_target="$root/home/.local/bin/sync-terminal-theme.sh"
+mkdir -p "$(dirname "$toggle_target")"
 chezmoi --config "$root/chezmoi.toml" \
   --source "$PWD" \
   --destination "$root/home" \
   --persistent-state "$root/chezmoi.boltdb" \
-  apply --force
+  apply --force "$toggle_target" "$sync_target"
 
-test -x "$root/home/.local/bin/toggle-theme.sh"
-test -x "$root/home/.local/bin/sync-terminal-theme.sh"
+test -x "$toggle_target"
+test -x "$sync_target"
 test ! -e "$root/home/.local/bin/$(printf '\155\157\163\150')-with-agent.sh"
 ```
 
