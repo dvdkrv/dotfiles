@@ -40,9 +40,26 @@ function doctorHarness(overrides = {}) {
   writeFileSync(join(sshDir, 'config_chezmoi'), 'Host github.com\n  User git\n', { mode: 0o600 });
   chmodSync(sshDir, 0o700);
 
-  for (const command of ['brew', 'starship', 'zoxide', 'fzf', 'nvim', 'npm', 'tmux', 'git']) {
+  for (const command of ['brew', 'starship', 'zoxide', 'fzf', 'nvim', 'npm', 'git']) {
     writeExecutable(join(bin, command), '#!/usr/bin/env bash\nexit 0\n');
   }
+  writeExecutable(join(bin, 'tmux'), `#!/usr/bin/env bash
+case "\${1:-}" in
+  -V)
+    printf 'tmux %s\\n' "\${FAKE_TMUX_VERSION:-3.7c}"
+    ;;
+  list-clients)
+    case "\${FAKE_TMUX_CLIENTS:-no-server}" in
+      no-server) exit 1 ;;
+      unknown) printf 'unknown\\n' ;;
+      mixed) printf 'dark\\nunknown\\n' ;;
+      light) printf 'light\\n' ;;
+      dark) printf 'dark\\n' ;;
+    esac
+    ;;
+  *) exit 0 ;;
+esac
+`);
   writeExecutable(join(bin, 'node'), `#!/usr/bin/env bash
 if [[ "\${1:-}" == "--version" ]]; then
   printf '%s\\n' "\${FAKE_NODE_VERSION:-v22.19.0}"
@@ -100,6 +117,8 @@ esac
     FAKE_NATS_VERSION: '2.14.6',
     FAKE_PI_VERSION: '0.84.1',
     FAKE_PI_LIST_MODE: 'complete',
+    FAKE_TMUX_VERSION: '3.7c',
+    FAKE_TMUX_CLIENTS: 'no-server',
     ...overrides,
   };
   return { root, home, stateHome, agentDir, env };
@@ -149,6 +168,25 @@ for (const [name, overrides, message] of [
     assert.match(outputOf(result), message);
   });
 }
+
+test('doctor rejects tmux older than 3.7', () => {
+  const result = runDoctor({ overrides: { FAKE_TMUX_VERSION: '3.6a' } });
+  assert.notEqual(result.status, 0, outputOf(result));
+  assert.match(outputOf(result), /tmux.*3\.7/i);
+});
+
+test('doctor warns when an attached tmux client has not reported a theme', () => {
+  const result = runDoctor({ overrides: { FAKE_TMUX_CLIENTS: 'mixed' } });
+  assert.equal(result.status, 0, outputOf(result));
+  assert.match(outputOf(result), /tmux.*client.*theme.*unknown/i);
+});
+
+test('doctor accepts a reported tmux client theme', () => {
+  const result = runDoctor({ overrides: { FAKE_TMUX_CLIENTS: 'dark' } });
+  assert.equal(result.status, 0, outputOf(result));
+  assert.match(outputOf(result), /tmux.*client.*theme.*dark/i);
+  assert.doesNotMatch(outputOf(result), /theme.*unknown/i);
+});
 
 test('doctor accepts a valid theme and warns for a stopped recorded broker', () => {
   const result = runDoctor({

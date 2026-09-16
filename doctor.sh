@@ -13,6 +13,7 @@ EXPECTED_PI_TOOLS="git:git@github.com:dvdkrv/pi-tools.git@v0.1.1"
 EXPECTED_SUPERPOWERS="git:github.com/obra/superpowers@v6.2.0"
 MIN_NODE_VERSION="22.19.0"
 MIN_NATS_VERSION="2.14.6"
+MIN_TMUX_VERSION="3.7"
 
 pass=0
 fail=0
@@ -110,6 +111,16 @@ if command -v nats-server >/dev/null 2>&1; then
     fi
 fi
 
+if command -v tmux >/dev/null 2>&1; then
+    tmux_output="$(tmux -V 2>/dev/null || true)"
+    tmux_version="$(sed -nE 's/^tmux ([0-9]+\.[0-9]+).*/\1/p' <<<"$tmux_output")"
+    if [[ "$tmux_version" =~ ^[0-9]+\.[0-9]+$ ]] && version_at_least "$tmux_version" "$MIN_TMUX_VERSION"; then
+        ok "tmux $tmux_version satisfies minimum $MIN_TMUX_VERSION"
+    else
+        bad "tmux must be at least $MIN_TMUX_VERSION (found ${tmux_output:-unknown})"
+    fi
+fi
+
 printf "\n== Pi packages ==\n"
 if command -v pi >/dev/null 2>&1; then
     if pi_packages="$(pi list 2>/dev/null)"; then
@@ -201,6 +212,19 @@ else
         ok "theme state is $theme"
     else
         bad "theme state must contain exactly light or dark"
+    fi
+fi
+
+if command -v tmux >/dev/null 2>&1; then
+    if tmux_client_themes="$(tmux list-clients -F '#{?client_theme,#{client_theme},unknown}' 2>/dev/null)"; then
+        if [[ -z "$tmux_client_themes" ]] || grep -qx 'unknown' <<<"$tmux_client_themes"; then
+            warn "at least one attached tmux client theme is unknown; direct SSH live reporting has not been observed"
+        else
+            themes="$(sort -u <<<"$tmux_client_themes" | paste -sd, -)"
+            ok "tmux client theme reporting is active ($themes)"
+            unset themes
+        fi
+        unset tmux_client_themes
     fi
 fi
 
