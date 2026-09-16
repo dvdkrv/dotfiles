@@ -89,6 +89,7 @@ test('explicit theme reapplies the complete palette when canonical state already
   for (const option of ['status-style', 'status-left', 'status-right', 'window-status-format', 'window-status-current-format', 'pane-border-style', 'pane-active-border-style']) {
     assert.match(commands, new RegExp(`set -g ${option}`));
   }
+  assert.match(commands, /set-environment -g LC_TERMINAL_THEME light/);
   assert.equal(readFileSync(harness.stateFile, 'utf8'), 'light\n');
 });
 
@@ -181,6 +182,7 @@ else
   tmux set -g pane-active-border-style 'fg=#40a02b'
 fi
 
+tmux set-environment -g LC_TERMINAL_THEME "$next"
 mv -f -- "$temporary" "$STATE"
 trap - EXIT
 tmux display-message "Theme: $next" || true

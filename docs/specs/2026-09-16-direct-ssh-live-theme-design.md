@@ -51,8 +51,8 @@ The tmux configuration registers both hooks. Each hook invokes the existing them
 
 1. accepts only `light` or `dark` when called explicitly;
 2. prepares the selected value in a temporary file beside the canonical state;
-3. applies the complete corresponding tmux palette, even when the file already contains that value;
-4. only after every palette command succeeds, atomically renames the temporary file over the canonical state; and
+3. applies the complete corresponding tmux palette and updates tmux's global `LC_TERMINAL_THEME` for newly created processes, even when the file already contains that value;
+4. only after every tmux command succeeds, atomically renames the temporary file over the canonical state; and
 5. leaves no temporary file after success or failure.
 
 The event order at the tmux server defines precedence. Therefore the latest valid client event becomes the account-wide theme.
@@ -112,7 +112,7 @@ No cleanup migration is added. Removing a formula from the Brewfile does not uni
 
 - Invalid helper arguments fail before changing state or tmux.
 - A failed atomic state replacement preserves the previous canonical file.
-- If a tmux palette command fails, the helper reports failure and does not publish a new canonical state. Because tmux option changes are not transactional, a partial palette is possible; idempotent reapplication repairs it without a special recovery path.
+- If a tmux palette or environment command fails, the helper reports failure and does not publish a new canonical state. Because tmux changes are not transactional, partial tmux state is possible; idempotent reapplication repairs it without a special recovery path.
 - Missing theme support leaves the last valid canonical state in place and keeps manual recovery available.
 - Multiple clients are intentionally last-event-wins rather than merged or session-scoped.
 

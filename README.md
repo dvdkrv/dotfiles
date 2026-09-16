@@ -55,14 +55,20 @@ The authoritative Neovim plugin lockfile is `dot_config/nvim/nvim-pack-lock.json
 
 ### Verify the terminal theme
 
-After `chezmoi apply`, reconnect with Mosh, attach tmux, and open a new tmux window so it inherits the attached client's environment. In the shell, verify:
+After `chezmoi apply`, connect from Ghostty using direct SSH, attach tmux, and load the managed configuration once at an explicit idle boundary:
 
 ```bash
-printf 'theme=%s term=%s\n' "$LC_TERMINAL_THEME" "$TERM"
-tmux show-environment LC_TERMINAL_THEME
+tmux source-file ~/.tmux.conf
+tmux display-message -p '#{client_theme}'
+cat "${XDG_STATE_HOME:-$HOME/.local/state}/theme"
+tmux show-options -gv status-style
 ```
 
-For a light terminal, both theme values should be `light`. Inside Neovim, run:
+Ghostty and tmux 3.7 use native mode 2031 reporting. The `client-light-theme` and `client-dark-theme` hooks make the latest valid client report the account-wide theme. `#{client_theme}` and the canonical state must each be exactly `light` or `dark`, and the status style must use the matching palette.
+
+Change the host appearance while the direct SSH client remains attached. All three outputs should update without reconnecting or reattaching. A running Pi TUI with the signed `pi-tools` extension already loaded should switch its built-in theme within roughly 200 ms without `/reload`. `prefix+T` remains manual recovery, not the normal synchronization path.
+
+New tmux panes inherit the updated `LC_TERMINAL_THEME`. A newly started Neovim should report the matching values:
 
 ```vim
 :echo $LC_TERMINAL_THEME
@@ -70,39 +76,18 @@ For a light terminal, both theme values should be `light`. Inside Neovim, run:
 :echo g:colors_name
 ```
 
-The expected values are `light`, `background=light`, and `catppuccin-latte` (`dark`, `background=dark`, and `catppuccin-mocha` in dark mode).
+The light values are `light`, `background=light`, and `catppuccin-latte`; the dark values are `dark`, `background=dark`, and `catppuccin-mocha`.
 
-Pi follows the same account-wide state after the signed `pi-tools` package is installed. Existing Pi processes need one human-controlled `/reload`; subsequent `prefix+T` or client-attachment changes update them live. Verify the canonical state without querying terminal OSC support:
+### Verify clipboard forwarding over direct SSH
 
-```bash
-cat "${XDG_STATE_HOME:-$HOME/.local/state}/theme"
-```
-
-The output should be exactly `light` or `dark` and should match tmux and Pi.
-
-### Verify clipboard forwarding over Mosh
-
-Apply the updated dotfiles on both the local and remote machines. End the existing Mosh connection, reconnect normally, attach tmux, and reload its configuration:
+With Ghostty connected through direct SSH and tmux attached, verify clipboard integration:
 
 ```bash
-tmux source-file ~/.tmux.conf
 tmux show-options -g set-clipboard
+printf 'direct ssh clipboard test' | tmux load-buffer -w -
 ```
 
-Verify the active remote server is the Homebrew Mosh 1.4 binary:
-
-```bash
-pid="$(pgrep -n mosh-server)"
-readlink "/proc/$pid/exe"
-```
-
-Test the transport from inside tmux:
-
-```bash
-printf 'mosh clipboard test' | tmux load-buffer -w -
-```
-
-Pasting locally should produce `mosh clipboard test`. Neovim `<leader>y` and tmux copy-mode `y`/Enter use the same OSC 52 path.
+Pasting locally should produce `direct ssh clipboard test`. Neovim `<leader>y` and tmux copy-mode `y`/Enter use the same tmux OSC 52 path.
 
 ## Layout
 

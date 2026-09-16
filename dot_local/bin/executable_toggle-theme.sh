@@ -43,6 +43,7 @@ else
   tmux set -g pane-active-border-style 'fg=#40a02b'
 fi
 
+tmux set-environment -g LC_TERMINAL_THEME "$next"
 mv -f -- "$temporary" "$STATE"
 trap - EXIT
 tmux display-message "Theme: $next" || true

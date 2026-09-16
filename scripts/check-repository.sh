@@ -4,6 +4,13 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
 
+removed_transport="$(printf '\155\157\163\150')"
+if git grep -in -- "$removed_transport"; then
+  echo "Removed terminal transport remains in tracked source" >&2
+  exit 1
+fi
+unset removed_transport
+
 check_tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-check.XXXXXX")"
 chezmoi_config="$check_tmpdir/chezmoi.toml"
 : >"$chezmoi_config"

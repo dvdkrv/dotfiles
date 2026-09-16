@@ -234,6 +234,7 @@ test('explicit theme reapplies the complete palette when canonical state already
   for (const option of ['status-style', 'status-left', 'status-right', 'window-status-format', 'window-status-current-format', 'pane-border-style', 'pane-active-border-style']) {
     assert.match(commands, new RegExp(`set -g ${option}`));
   }
+  assert.match(commands, /set-environment -g LC_TERMINAL_THEME light/);
   assert.equal(readFileSync(harness.stateFile, 'utf8'), 'light\n');
 });
 
@@ -323,6 +324,14 @@ test('tmux native client theme hooks publish light and dark canonical state', ()
     harness.run('kill-server');
     rmSync(harness.root, { recursive: true, force: true });
   }
+});
+
+test('README documents native direct-SSH theme verification', () => {
+  const readme = repositoryFile('README.md');
+  assert.match(readme, /direct SSH/i);
+  assert.match(readme, /#\{client_theme\}/);
+  assert.match(readme, /client-light-theme|client-dark-theme/);
+  assert.match(readme, /200 ms/i);
 });
 
 test('clipboard helper uses the first supported backend', () => {
