@@ -40,7 +40,7 @@ function doctorHarness(overrides = {}) {
   writeFileSync(join(sshDir, 'config_chezmoi'), 'Host github.com\n  User git\n', { mode: 0o600 });
   chmodSync(sshDir, 0o700);
 
-  for (const command of ['brew', 'starship', 'zoxide', 'fzf', 'nvim', 'npm', 'mosh', 'tmux', 'git']) {
+  for (const command of ['brew', 'starship', 'zoxide', 'fzf', 'nvim', 'npm', 'tmux', 'git']) {
     writeExecutable(join(bin, command), '#!/usr/bin/env bash\nexit 0\n');
   }
   writeExecutable(join(bin, 'node'), `#!/usr/bin/env bash

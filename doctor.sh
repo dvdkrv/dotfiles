@@ -72,7 +72,7 @@ check_mode() {
 }
 
 printf "== commands ==\n"
-for command in chezmoi brew starship zoxide fzf nvim jq node npm pi nats-server mosh tmux git; do
+for command in chezmoi brew starship zoxide fzf nvim jq node npm pi nats-server tmux git; do
     check_cmd "$command"
 done
 

@@ -197,7 +197,7 @@ function writeExecutable(path, content) {
 function doctorHarness(overrides = {}) {
   // Create root/home/bin, ~/.ssh/config, and ~/.ssh/config_chezmoi.
   // Give ~/.ssh mode 0700 and config files mode 0600.
-  // Shim brew, starship, zoxide, fzf, nvim, npm, mosh, tmux, and git.
+  // Shim brew, starship, zoxide, fzf, nvim, npm, tmux, and git.
   // Shim node --version as v22.19.0.
   // Shim pi --version as 0.84.1 and pi list with the two exact package sources.
   // Shim nats-server --version as "nats-server: v2.14.6".
@@ -277,7 +277,7 @@ Implement numeric `version_at_least ACTUAL MINIMUM` using `awk -F.` so it works 
 Require:
 
 ```text
-chezmoi brew starship zoxide fzf nvim jq node npm pi nats-server mosh tmux git
+chezmoi brew starship zoxide fzf nvim jq node npm pi nats-server tmux git
 ```
 
 Check exact Pi, minimum Node, and NATS major/minimum policy. If a command is missing, record one failure and skip checks that require it.
