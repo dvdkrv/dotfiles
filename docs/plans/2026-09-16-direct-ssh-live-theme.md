@@ -265,12 +265,12 @@ test('tmux native client theme hooks publish light and dark canonical state', ()
     result = harness.run('source-file', new URL('../dot_tmux.conf', import.meta.url).pathname);
     assert.equal(result.status, 0, result.stderr);
 
-    result = harness.run('run-hook', '-g', 'client-light-theme');
+    result = harness.run('set-hook', '-gR', 'client-light-theme');
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(harness.stateFile, 'utf8'), 'light\n');
     assert.match(harness.run('show-options', '-gv', 'status-style').stdout, /#eff1f5/);
 
-    result = harness.run('run-hook', '-g', 'client-dark-theme');
+    result = harness.run('set-hook', '-gR', 'client-dark-theme');
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(harness.stateFile, 'utf8'), 'dark\n');
     assert.match(harness.run('show-options', '-gv', 'status-style').stdout, /#1e1e2e/);

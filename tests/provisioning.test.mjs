@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -64,6 +64,21 @@ fi
     TMUX_FAIL_MATCH: '',
   };
   return { root, stateHome, env, stateFile: join(stateHome, 'theme'), tmuxLog };
+}
+
+function tmuxThemeHarness() {
+  const root = mkdtempSync(join(tmpdir(), 'dotfiles-tmux-theme-'));
+  const home = join(root, 'home');
+  const stateHome = join(root, 'state');
+  const localBin = join(home, '.local', 'bin');
+  const socket = `dotfiles-theme-${process.pid}-${Date.now()}-${Math.random()}`;
+  mkdirSync(localBin, { recursive: true });
+  mkdirSync(stateHome, { recursive: true });
+  writeExecutable(join(localBin, 'toggle-theme.sh'), repositoryFile('dot_local/bin/executable_toggle-theme.sh'));
+  writeExecutable(join(localBin, 'sync-terminal-theme.sh'), repositoryFile('dot_local/bin/executable_sync-terminal-theme.sh'));
+  const env = { ...process.env, HOME: home, XDG_STATE_HOME: stateHome };
+  const run = (...args) => spawnSync('tmux', ['-L', socket, ...args], { env, encoding: 'utf8' });
+  return { root, home, stateHome, stateFile: join(stateHome, 'theme'), socket, run };
 }
 
 function moshAgentHarness() {
@@ -523,6 +538,29 @@ test('chezmoi installs terminal theme helpers as executable files', () => {
   assert.equal(result.status, 0, result.stderr);
   for (const target of targets) {
     assert.equal(statSync(target).mode & 0o777, 0o755, `${target} should be mode 0755`);
+  }
+});
+
+test('tmux native client theme hooks publish light and dark canonical state', () => {
+  const harness = tmuxThemeHarness();
+  try {
+    let result = harness.run('-f', '/dev/null', 'new-session', '-d', '-s', 'theme');
+    assert.equal(result.status, 0, result.stderr);
+    result = harness.run('source-file', new URL('../dot_tmux.conf', import.meta.url).pathname);
+    assert.equal(result.status, 0, result.stderr);
+
+    result = harness.run('set-hook', '-gR', 'client-light-theme');
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(harness.stateFile, 'utf8'), 'light\n');
+    assert.match(harness.run('show-options', '-gv', 'status-style').stdout, /#eff1f5/);
+
+    result = harness.run('set-hook', '-gR', 'client-dark-theme');
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(harness.stateFile, 'utf8'), 'dark\n');
+    assert.match(harness.run('show-options', '-gv', 'status-style').stdout, /#1e1e2e/);
+  } finally {
+    harness.run('kill-server');
+    rmSync(harness.root, { recursive: true, force: true });
   }
 });
 
