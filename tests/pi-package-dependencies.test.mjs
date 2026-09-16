@@ -11,6 +11,7 @@ const SUPERPOWERS_SOURCE = 'git:github.com/obra/superpowers@v6.2.0';
 
 test('extracted Pi implementation and TypeScript workspace are absent', () => {
   const extracted = [
+    'pi-superpowers-package',
     'pi-claude-bridge',
     'pi-loop-package',
     'pi-messaging',
@@ -97,6 +98,10 @@ test('README documents canonical installation and delegation safety', () => {
   assert.match(readme, /\.\/install\.sh/);
   assert.match(readme, /headless Pi/i);
   assert.match(readme, /never force-removes/i);
+  assert.doesNotMatch(readme, /local Pi packages/i);
+  assert.doesNotMatch(readme, /npm run typecheck/);
+  assert.doesNotMatch(readme, /`pi-\*`|`docs\/superpowers\/`/);
+  assert.match(readme, /signed .*pi-tools.*v0\.1\.1/i);
 });
 
 test('nvim-pack-lock is the sole Neovim plugin lockfile', () => {

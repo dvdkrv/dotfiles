@@ -380,7 +380,7 @@ test('Pi and package installers are pinned and do not hide required failures', (
   const packageInstaller = repositoryFile('run_onchange_after_06-install-pi-packages.sh.tmpl');
   const claudeInstaller = repositoryFile('run_onchange_after_04-install-claude-plugins.sh.tmpl');
 
-  assert.match(piInstaller, /^PI_VERSION="0\.82\.0"$/m);
+  assert.match(piInstaller, /^PI_VERSION="0\.84\.1"$/m);
   assert.match(piInstaller, /@earendil-works\/pi-coding-agent@"\$PI_VERSION"/);
   assert.doesNotMatch(packageInstaller, /pi install .*\|\| true/);
   assert.doesNotMatch(packageInstaller, /command -v (?:pi|npm).*\|\| exit 0/);

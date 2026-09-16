@@ -1,6 +1,6 @@
 # Dotfiles
 
-Personal macOS and Linux dotfiles managed with [chezmoi](https://www.chezmoi.io/). The repository also contains local Pi packages, Neovim configuration, shell/tmux configuration, and machine provisioning scripts.
+Personal macOS and Linux configuration managed with [chezmoi](https://www.chezmoi.io/). The repository provisions signed Pi packages alongside Neovim, shell, tmux, and machine configuration.
 
 ## Install
 
@@ -17,7 +17,7 @@ During initialization, choose whether the machine has an Ansible-managed work zs
 - work machine: deploy `~/.personal-zshrc` and leave `~/.zshrc` unmanaged;
 - personal machine: deploy `~/.zshrc` and leave `~/.personal-zshrc` unmanaged.
 
-Repository-only directories such as `docs/`, `tests/`, `scripts/`, and `pi-*` are never deployed into `$HOME`.
+Repository-only directories such as `docs/`, `tests/`, and `scripts/` are never deployed into `$HOME`.
 
 ## Safety
 
@@ -45,7 +45,6 @@ Run validation:
 
 ```bash
 npm test
-npm run typecheck
 npm run lint:shell
 npm run check
 ```
@@ -73,7 +72,7 @@ For a light terminal, both theme values should be `light`. Inside Neovim, run:
 
 The expected values are `light`, `background=light`, and `catppuccin-latte` (`dark`, `background=dark`, and `catppuccin-mocha` in dark mode).
 
-Pi follows the same account-wide state after the theme-sync package is installed. Existing Pi processes need one human-controlled `/reload`; subsequent `prefix+T` or client-attachment changes update them live. Verify the canonical state without querying terminal OSC support:
+Pi follows the same account-wide state after the signed `pi-tools` package is installed. Existing Pi processes need one human-controlled `/reload`; subsequent `prefix+T` or client-attachment changes update them live. Verify the canonical state without querying terminal OSC support:
 
 ```bash
 cat "${XDG_STATE_HOME:-$HOME/.local/state}/theme"
@@ -110,6 +109,6 @@ Pasting locally should produce `mosh clipboard test`. Neovim `<leader>y` and tmu
 - `dot_*`, `private_*`: files managed into `$HOME`
 - `run_*`: ordered chezmoi provisioning scripts
 - `.chezmoitemplates/`: shared rendered shell content
-- `pi-*`: local Pi packages loaded from the chezmoi source directory
+- `dot_pi/`: Pi settings and locally managed skills
 - `tests/`: repository-level policy and provisioning tests
-- `docs/superpowers/`: implementation designs and plans
+- `docs/`: focused design and implementation records
