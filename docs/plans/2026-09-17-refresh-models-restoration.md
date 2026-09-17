@@ -191,6 +191,7 @@ Expected: trusted `G` signature from `SHA256:YD5aofj7Ho7upNN2q7RI2R5mPJPQGKpO+91
 
 **Files:**
 - Modify: `tests/pi-package-dependencies.test.mjs`
+- Modify: `tests/doctor.test.mjs`
 - Modify: `README.md`
 
 **Interfaces:**
@@ -244,7 +245,51 @@ node --test --test-name-pattern='README documents canonical' tests/pi-package-de
 
 Expected: PASS.
 
-- [ ] **Step 5: Run the complete test suite and ShellCheck**
+- [ ] **Step 5: Run the complete suite and capture the doctor harness regression**
+
+Run:
+
+```bash
+npm test
+```
+
+Expected before the harness update: doctor tests fail with `broken: dot_pi/agent/settings.json.tmpl` because their fake `chezmoi execute-template` copies template syntax verbatim instead of rendering it.
+
+- [ ] **Step 6: Make doctor template checks use the real renderer**
+
+In `tests/doctor.test.mjs`, resolve the real Chezmoi binary once:
+
+```js
+const doctorScript = new URL('../doctor.sh', import.meta.url).pathname;
+const realChezmoi = spawnSync('sh', ['-c', 'command -v chezmoi'], { encoding: 'utf8' }).stdout.trim();
+assert.notEqual(realChezmoi, '', 'chezmoi is required for doctor template tests');
+```
+
+Keep `chezmoi doctor` isolated, but replace the fake execute behavior with:
+
+```js
+  writeExecutable(join(bin, 'chezmoi'), `#!/usr/bin/env bash
+case "\${1:-}" in
+  doctor) exit 0 ;;
+  execute-template) exec ${JSON.stringify(realChezmoi)} execute-template ;;
+  *) exit 0 ;;
+esac
+`);
+```
+
+This delegates only template rendering and does not inspect or mutate live Chezmoi state because the harness provides an isolated `HOME`.
+
+- [ ] **Step 7: Verify the doctor harness is GREEN**
+
+Run:
+
+```bash
+node --test tests/doctor.test.mjs
+```
+
+Expected: all 17 doctor tests pass.
+
+- [ ] **Step 8: Run the complete test suite and ShellCheck**
 
 Run:
 
@@ -256,10 +301,10 @@ git diff --check
 
 Expected: 44 tests pass after the new capability test, ShellCheck exits 0, and no whitespace errors are reported.
 
-- [ ] **Step 6: Commit the documentation checkpoint**
+- [ ] **Step 9: Commit the documentation checkpoint**
 
 ```bash
-git add README.md tests/pi-package-dependencies.test.mjs
+git add README.md tests/pi-package-dependencies.test.mjs tests/doctor.test.mjs docs/plans/2026-09-17-refresh-models-restoration.md
 git commit -S -m "docs: explain optional model refresh package"
 ```
 

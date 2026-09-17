@@ -13,6 +13,8 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const doctorScript = new URL('../doctor.sh', import.meta.url).pathname;
+const realChezmoi = spawnSync('sh', ['-c', 'command -v chezmoi'], { encoding: 'utf8' }).stdout.trim();
+assert.notEqual(realChezmoi, '', 'chezmoi is required for doctor template tests');
 
 function writeExecutable(path, content) {
   writeFileSync(path, content, { mode: 0o755 });
@@ -102,7 +104,7 @@ esac
   writeExecutable(join(bin, 'chezmoi'), `#!/usr/bin/env bash
 case "\${1:-}" in
   doctor) exit 0 ;;
-  execute-template) cat ;;
+  execute-template) exec ${JSON.stringify(realChezmoi)} execute-template ;;
   *) exit 0 ;;
 esac
 `);

@@ -160,6 +160,10 @@ test('README documents canonical installation and delegation safety', () => {
   assert.doesNotMatch(readme, /npm run typecheck/);
   assert.doesNotMatch(readme, /`pi-\*`|`docs\/superpowers\/`/);
   assert.match(readme, /signed .*pi-tools.*v0\.1\.1/i);
+  assert.match(readme, /datadog-pi-packages\/packages\/refresh-models/);
+  assert.match(readme, /\/refresh-models/);
+  assert.match(readme, /checkout.*not.*clone|does not clone.*checkout/i);
+  assert.match(readme, /\/reload/);
 });
 
 test('nvim-pack-lock is the sole Neovim plugin lockfile', () => {
