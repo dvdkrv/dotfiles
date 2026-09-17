@@ -1,13 +1,63 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 function pkg(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+const REPOSITORY_ROOT = fileURLToPath(new URL('../', import.meta.url));
+const SETTINGS_TEMPLATE = join(REPOSITORY_ROOT, 'dot_pi/agent/settings.json.tmpl');
+const REFRESH_MODELS_SOURCE = '../../dd/datadog-pi-packages/packages/refresh-models';
+const REFRESH_MODELS_CHECKOUT = 'dd/datadog-pi-packages/packages/refresh-models';
 const PI_TOOLS_SOURCE = 'git:git@github.com:dvdkrv/pi-tools.git@v0.1.1';
 const SUPERPOWERS_SOURCE = 'git:github.com/obra/superpowers@v6.2.0';
+
+function renderPiSettings({ withRefreshModels = false } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'dotfiles-pi-settings-'));
+  const home = join(root, 'home');
+  const config = join(root, 'chezmoi.toml');
+  const state = join(root, 'chezmoi.boltdb');
+  mkdirSync(home, { recursive: true });
+  if (withRefreshModels) {
+    mkdirSync(join(home, REFRESH_MODELS_CHECKOUT), { recursive: true });
+  }
+  writeFileSync(config, `sourceDir = ${JSON.stringify(REPOSITORY_ROOT)}\n`, 'utf8');
+
+  try {
+    const result = spawnSync(
+      'chezmoi',
+      [
+        '--config', config,
+        '--source', REPOSITORY_ROOT,
+        '--destination', home,
+        '--persistent-state', state,
+        'execute-template',
+      ],
+      {
+        cwd: REPOSITORY_ROOT,
+        env: { ...process.env, HOME: home },
+        input: readFileSync(SETTINGS_TEMPLATE, 'utf8'),
+        encoding: 'utf8',
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 test('extracted Pi implementation and TypeScript workspace are absent', () => {
   const extracted = [
@@ -25,7 +75,7 @@ test('extracted Pi implementation and TypeScript workspace are absent', () => {
 });
 
 test('pi settings load the signed Pi tools release and pinned Superpowers exactly once', () => {
-  const settings = pkg('dot_pi/agent/settings.json.tmpl');
+  const settings = renderPiSettings();
 
   assert.equal(
     settings.theme,
@@ -39,6 +89,14 @@ test('pi settings load the signed Pi tools release and pinned Superpowers exactl
     false,
     'settings should not load local Pi implementation packages',
   );
+});
+
+test('pi settings load refresh-models only when its private checkout exists', () => {
+  const absent = renderPiSettings();
+  const present = renderPiSettings({ withRefreshModels: true });
+
+  assert.equal(absent.packages.filter((source) => source === REFRESH_MODELS_SOURCE).length, 0);
+  assert.equal(present.packages.filter((source) => source === REFRESH_MODELS_SOURCE).length, 1);
 });
 
 test('pi package installer reconciles only signed git packages', () => {

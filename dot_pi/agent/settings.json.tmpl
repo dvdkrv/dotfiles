@@ -1,7 +1,9 @@
+{{- $refreshModelsCheckout := joinPath .chezmoi.homeDir "dd/datadog-pi-packages/packages/refresh-models" -}}
 {
   "packages": [
     "git:git@github.com:dvdkrv/pi-tools.git@v0.1.1",
-    "git:github.com/obra/superpowers@v6.2.0"
+    "git:github.com/obra/superpowers@v6.2.0"{{ if stat $refreshModelsCheckout }},
+    "../../dd/datadog-pi-packages/packages/refresh-models"{{ end }}
   ],
   "theme": "light/dark",
   "defaultThinkingLevel": "high"
