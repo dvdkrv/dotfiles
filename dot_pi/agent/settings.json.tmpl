@@ -2,9 +2,22 @@
 {
   "packages": [
     "git:git@github.com:dvdkrv/pi-tools.git@v0.1.1",
-    "git:github.com/obra/superpowers@v6.2.0"{{ if stat $refreshModelsCheckout }},
+    "git:github.com/obra/superpowers@v6.2.0",
+    "npm:pi-powerline-footer@0.17.2"{{ if stat $refreshModelsCheckout }},
     "../../dd/datadog-pi-packages/packages/refresh-models"{{ end }}
   ],
   "theme": "light/dark",
-  "defaultThinkingLevel": "high"
+  "defaultThinkingLevel": "high",
+  "powerline": {
+    "preset": "default",
+    "cache_read": { "format": "percent" },
+    "customItems": [
+      {
+        "id": "messages",
+        "statusKey": "pi-messaging",
+        "position": "right",
+        "color": "accent"
+      }
+    ]
+  }
 }

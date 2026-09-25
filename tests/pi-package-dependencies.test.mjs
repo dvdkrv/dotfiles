@@ -91,6 +91,27 @@ test('pi settings load the signed Pi tools release and pinned Superpowers exactl
   );
 });
 
+const POWERLINE_SOURCE = 'npm:pi-powerline-footer@0.17.2';
+
+test('pi settings load the pinned powerline footer exactly once', () => {
+  const settings = renderPiSettings();
+
+  assert.equal(settings.packages.filter((source) => source === POWERLINE_SOURCE).length, 1);
+  assert.equal(settings.packages.filter((source) => /pi-powerline-footer/.test(source)).length, 1);
+});
+
+test('powerline shows cache hit rate and messaging status as a segment after the built-ins', () => {
+  const { powerline } = renderPiSettings();
+
+  assert.equal(powerline.preset, 'default');
+  assert.equal(powerline.cache_read.format, 'percent');
+  const messages = powerline.customItems.filter((item) => item.statusKey === 'pi-messaging');
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].position, 'right');
+  assert.equal(messages[0].hideWhenMissing ?? true, true);
+  assert.equal(powerline.layout, undefined, 'default preset order should stay intact');
+});
+
 test('pi settings load refresh-models only when its private checkout exists', () => {
   const absent = renderPiSettings();
   const present = renderPiSettings({ withRefreshModels: true });
@@ -106,6 +127,8 @@ test('pi package installer reconciles only signed git packages', () => {
   assert.match(script, /SUPERPOWERS_PACKAGE="git:github\.com\/obra\/superpowers@v6\.2\.0"/);
   assert.match(script, /pi install "\$PI_TOOLS_PACKAGE"/);
   assert.match(script, /pi install "\$SUPERPOWERS_PACKAGE"/);
+  assert.match(script, /POWERLINE_PACKAGE="npm:pi-powerline-footer@0\.17\.2"/);
+  assert.match(script, /pi install "\$POWERLINE_PACKAGE"/);
   assert.doesNotMatch(script, /LOCAL_PACKAGES|npm install --omit=dev|--prefix "\$pkg"/);
 });
 
