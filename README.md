@@ -33,7 +33,7 @@ The signed [`pi-tools`](https://github.com/dvdkrv/pi-tools) `v0.1.1` release let
 
 See the package README for setup, lifecycle recovery, and isolated no-inference test commands.
 
-The pinned [`pi-powerline-footer`](https://github.com/nicobailon/pi-powerline-footer) `0.17.2` footer shows the session cache hit rate (`cacheRead / (input + cacheRead)`) and, while a session has joined a group, the messaging status (`pi-messaging`) as a dedicated segment after the built-in ones.
+The pinned [`pi-powerline-footer`](https://github.com/nicobailon/pi-powerline-footer) `0.17.2` footer shows the session cache hit rate (`cacheRead / (input + cacheRead)`) and, while a session has joined a group, the messaging status (`pi-messaging`) as a dedicated segment after the built-in ones. The pinned [`pi-markdown-preview`](https://www.npmjs.com/package/pi-markdown-preview) `0.18.1` package renders Markdown previews.
 
 ## Optional work model refresh
 

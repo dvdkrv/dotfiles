@@ -3,7 +3,8 @@
   "packages": [
     "git:git@github.com:dvdkrv/pi-tools.git@v0.1.1",
     "git:github.com/obra/superpowers@v6.2.0",
-    "npm:pi-powerline-footer@0.17.2"{{ if stat $refreshModelsCheckout }},
+    "npm:pi-powerline-footer@0.17.2",
+    "npm:pi-markdown-preview@0.18.1"{{ if stat $refreshModelsCheckout }},
     "../../dd/datadog-pi-packages/packages/refresh-models"{{ end }}
   ],
   "theme": "light/dark",
