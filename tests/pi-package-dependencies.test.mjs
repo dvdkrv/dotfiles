@@ -21,10 +21,12 @@ const REPOSITORY_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SETTINGS_TEMPLATE = join(REPOSITORY_ROOT, 'dot_pi/agent/settings.json.tmpl');
 const REFRESH_MODELS_SOURCE = '../../dd/datadog-pi-packages/packages/refresh-models';
 const REFRESH_MODELS_CHECKOUT = 'dd/datadog-pi-packages/packages/refresh-models';
+const RESEARCH_WEB_SOURCE = '../../dd/datadog-pi-packages/packages/research-web';
+const RESEARCH_WEB_CHECKOUT = 'dd/datadog-pi-packages/packages/research-web';
 const PI_TOOLS_SOURCE = 'git:git@github.com:dvdkrv/pi-tools.git@v0.1.1';
 const SUPERPOWERS_SOURCE = 'git:github.com/obra/superpowers@v6.2.0';
 
-function renderPiSettings({ withRefreshModels = false } = {}) {
+function renderPiSettings({ withRefreshModels = false, withResearchWeb = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'dotfiles-pi-settings-'));
   const home = join(root, 'home');
   const config = join(root, 'chezmoi.toml');
@@ -32,6 +34,9 @@ function renderPiSettings({ withRefreshModels = false } = {}) {
   mkdirSync(home, { recursive: true });
   if (withRefreshModels) {
     mkdirSync(join(home, REFRESH_MODELS_CHECKOUT), { recursive: true });
+  }
+  if (withResearchWeb) {
+    mkdirSync(join(home, RESEARCH_WEB_CHECKOUT), { recursive: true });
   }
   writeFileSync(config, `sourceDir = ${JSON.stringify(REPOSITORY_ROOT)}\n`, 'utf8');
 
@@ -121,6 +126,17 @@ test('pi settings load refresh-models only when its private checkout exists', ()
 
   assert.equal(absent.packages.filter((source) => source === REFRESH_MODELS_SOURCE).length, 0);
   assert.equal(present.packages.filter((source) => source === REFRESH_MODELS_SOURCE).length, 1);
+});
+
+test('pi settings load research-web only when its private checkout exists', () => {
+  const absent = renderPiSettings({ withRefreshModels: true });
+  const present = renderPiSettings({ withResearchWeb: true });
+  const both = renderPiSettings({ withRefreshModels: true, withResearchWeb: true });
+
+  assert.equal(absent.packages.filter((source) => source === RESEARCH_WEB_SOURCE).length, 0);
+  assert.equal(present.packages.filter((source) => source === RESEARCH_WEB_SOURCE).length, 1);
+  assert.equal(present.packages.filter((source) => source === REFRESH_MODELS_SOURCE).length, 0);
+  assert.deepEqual(both.packages.slice(-2), [REFRESH_MODELS_SOURCE, RESEARCH_WEB_SOURCE]);
 });
 
 test('pi package installer reconciles only signed git packages', () => {

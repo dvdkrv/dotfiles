@@ -37,7 +37,7 @@ The pinned [`pi-powerline-footer`](https://github.com/nicobailon/pi-powerline-fo
 
 ## Optional work model refresh
 
-When `~/dd/datadog-pi-packages/packages/refresh-models` already exists, the managed Pi settings load it as a private work extension and expose `/refresh-models`. Dotfiles only declares the existing checkout; it does not clone, update, build, or install dependencies for that repository.
+When `~/dd/datadog-pi-packages/packages/refresh-models` already exists, the managed Pi settings load it as a private work extension and expose `/refresh-models`. The same applies to `~/dd/datadog-pi-packages/packages/research-web`. Dotfiles only declares existing checkouts; it does not clone, update, build, or install dependencies for that repository.
 
 After applying a settings change, start a new Pi process or run `/reload` at an explicit idle boundary. Updating the private checkout also requires an explicit reload before an existing Pi process uses the new code.
 
