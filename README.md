@@ -95,6 +95,14 @@ printf 'direct ssh clipboard test' | tmux load-buffer -w -
 
 Pasting locally should produce `direct ssh clipboard test`. Neovim `<leader>y` and tmux copy-mode `y`/Enter use the same tmux OSC 52 path.
 
+### tmux session persistence
+
+Pinned [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) and [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum) checkouts in `~/.tmux/plugins` save sessions, windows, pane layouts, working directories, and scrollback every 15 minutes. The last save is restored automatically when a tmux server starts, for example after a host reboot. Running processes are not preserved; only simple programs such as `nvim`, `less`, and `htop` are relaunched. Use `prefix + Ctrl-s` to save and `prefix + Ctrl-r` to restore manually. Saves live in `~/.local/share/tmux/resurrect` (or `~/.tmux/resurrect`). Verify autosave is active:
+
+```bash
+tmux show-options -gv status-right | grep -c continuum_save.sh   # expect 1
+```
+
 ## Layout
 
 - `dot_*`, `private_*`: files managed into `$HOME`

@@ -48,6 +48,9 @@ printf '%s\\n' "$*" >> "$TMUX_LOG"
 if [[ "$1" == "show-environment" ]]; then
   printf 'LC_TERMINAL_THEME=%s\\n' "$TMUX_THEME"
 fi
+if [[ "$1" == "show-options" && "$*" == *status-right* ]]; then
+  printf '%s\\n' "\${TMUX_STATUS_RIGHT:-}"
+fi
 if [[ -n "\${TMUX_FAIL_MATCH:-}" && "$*" == *"$TMUX_FAIL_MATCH"* ]]; then
   exit 71
 fi
@@ -60,6 +63,7 @@ fi
     TMUX_LOG: tmuxLog,
     TMUX_THEME: clientTheme,
     TMUX_FAIL_MATCH: '',
+    TMUX_STATUS_RIGHT: '',
   };
   return { root, stateHome, env, stateFile: join(stateHome, 'theme'), tmuxLog };
 }
@@ -206,6 +210,71 @@ test('zsh and tmux integrations are guarded and portable', () => {
   assert.match(tmux, /set -g set-clipboard on/);
   assert.match(tmux, /copy-to-clipboard\.sh/);
   assert.doesNotMatch(tmux, /"pbcopy"/);
+});
+
+const tmuxPluginInstaller = 'run_onchange_after_07-install-tmux-plugins.sh';
+
+test('tmux session persistence plugins are pinned and loaded after the status bar', () => {
+  const installer = repositoryFile(tmuxPluginInstaller);
+  const tmux = repositoryFile('dot_tmux.conf');
+
+  assert.match(installer, /set -euo pipefail/);
+  assert.match(installer, /tmux-resurrect\.git [0-9a-f]{40}$/m);
+  assert.match(installer, /tmux-continuum\.git [0-9a-f]{40}$/m);
+  assert.match(tmux, /set -g @continuum-restore 'on'/);
+  assert.match(tmux, /set -g @resurrect-capture-pane-contents 'on'/);
+
+  const resurrect = tmux.indexOf('tmux-resurrect/resurrect.tmux');
+  const continuum = tmux.indexOf('tmux-continuum/continuum.tmux');
+  assert.ok(resurrect > 0 && continuum > resurrect, 'resurrect must load before continuum');
+  assert.ok(continuum > tmux.lastIndexOf('status-right'), 'continuum must load after status-right is final');
+});
+
+test('tmux config loads installed persistence plugins and tolerates their absence', () => {
+  const harness = tmuxThemeHarness();
+  const plugins = join(harness.home, '.tmux', 'plugins');
+  try {
+    let result = harness.run('-f', '/dev/null', 'new-session', '-d', '-s', 'persist');
+    assert.equal(result.status, 0, result.stderr);
+    result = harness.run('source-file', new URL('../dot_tmux.conf', import.meta.url).pathname);
+    assert.equal(result.status, 0, result.stderr);
+
+    for (const [name, script] of [['tmux-resurrect', 'resurrect.tmux'], ['tmux-continuum', 'continuum.tmux']]) {
+      mkdirSync(join(plugins, name), { recursive: true });
+      writeExecutable(join(plugins, name, script), `#!/usr/bin/env bash\ntmux show-options -gv status-right > "$HOME/${name}.loaded"\n`);
+    }
+    result = harness.run('source-file', new URL('../dot_tmux.conf', import.meta.url).pathname);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(join(harness.home, 'tmux-resurrect.loaded')), true);
+    assert.match(readFileSync(join(harness.home, 'tmux-continuum.loaded'), 'utf8'), /%H:%M/);
+  } finally {
+    harness.run('kill-server');
+    rmSync(harness.root, { recursive: true, force: true });
+  }
+});
+
+test('theme changes preserve the continuum autosave hook in status-right', () => {
+  const hook = '#(/home/me/.tmux/plugins/tmux-continuum/scripts/continuum_save.sh)';
+  for (const theme of ['light', 'dark']) {
+    const harness = themeScriptHarness(theme);
+    const result = spawnSync('/bin/bash', [toggleThemeScript, theme], {
+      env: { ...harness.env, TMUX_STATUS_RIGHT: `${hook}#[fg=#89b4fa]%H:%M ` },
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const statusRight = readFileSync(harness.tmuxLog, 'utf8').split('\n').find(line => line.startsWith('set -g status-right '));
+    assert.ok(statusRight.startsWith(`set -g status-right ${hook}#[fg=`), `${theme}: ${statusRight}`);
+    assert.equal(statusRight.split('continuum_save.sh').length, 2, 'hook must appear exactly once');
+  }
+});
+
+test('theme changes do not invent an autosave hook', () => {
+  const harness = themeScriptHarness('dark');
+  const result = spawnSync('/bin/bash', [toggleThemeScript, 'dark'], { env: harness.env, encoding: 'utf8' });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(harness.tmuxLog, 'utf8'), /^set -g status-right #\[fg=#89b4fa\]/m);
 });
 
 test('toggle-theme creates canonical state even when explicit dark matches the default', () => {
