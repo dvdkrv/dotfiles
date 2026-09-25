@@ -9,7 +9,7 @@ YELLOW=$'\033[33m'
 RESET=$'\033[0m'
 
 EXPECTED_PI_VERSION="0.84.1"
-EXPECTED_PI_TOOLS="git:git@github.com:dvdkrv/pi-tools.git@v0.1.1"
+EXPECTED_PI_TOOLS="git:git@github.com:dvdkrv/pi-tools.git@v0.2.1"
 EXPECTED_SUPERPOWERS="git:github.com/obra/superpowers@v6.2.0"
 MIN_NODE_VERSION="22.19.0"
 MIN_NATS_VERSION="2.14.6"
@@ -127,9 +127,9 @@ if command -v pi >/dev/null 2>&1; then
         pi_tools_count="$(grep -Fc -- "$EXPECTED_PI_TOOLS" <<<"$pi_packages")"
         superpowers_count="$(grep -Fc -- "$EXPECTED_SUPERPOWERS" <<<"$pi_packages")"
         if [[ "$pi_tools_count" == "1" ]]; then
-            ok "pi-tools v0.1.1 is configured exactly once"
+            ok "pi-tools v0.2.1 is configured exactly once"
         else
-            bad "pi-tools v0.1.1 must be configured exactly once"
+            bad "pi-tools v0.2.1 must be configured exactly once"
         fi
         if [[ "$superpowers_count" == "1" ]]; then
             ok "Superpowers v6.2.0 is configured exactly once"

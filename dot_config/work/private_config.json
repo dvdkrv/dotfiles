@@ -1,0 +1,32 @@
+{
+  "jira": {
+    "site": "https://datadoghq.atlassian.net",
+    "email": "david.kirov@datadoghq.com",
+    "secret": { "command": ["pass", "show", "atlassian_api_key"] },
+    "defaultProject": "AI",
+    "defaultIssueType": "Task"
+  },
+  "github": {
+    "accounts": [
+      { "user": "david-kirov_ddog", "orgs": ["ddoghq"] },
+      { "user": "dkirov-dd", "orgs": ["DataDog"] }
+    ]
+  },
+  "projects": [
+    { "slug": "sap-erp", "title": "SAP ERP Observability", "jiraEpic": "AI-7018", "notesPath": "~/go/src/github.com/DataDog/vault/projects/sap-erp-observability" },
+    { "slug": "tuf", "title": "TUF & wheel publishing", "jiraEpic": "AI-6515" },
+    { "slug": "tooling", "title": "Dev tooling (dotfiles, pi-tools)" }
+  ],
+  "rules": [
+    { "jiraEpic": "AI-7018", "project": "sap-erp" },
+    { "jiraEpic": "AI-6515", "project": "tuf" },
+    { "repo": "sap-erp-loadgen", "project": "sap-erp" },
+    { "repo": "sap-otc-loadgen", "project": "sap-erp" },
+    { "repo": "agent-integrations-tuf", "project": "tuf" },
+    { "repo": "agent-integration-wheels-release", "project": "tuf" },
+    { "repo": "tuf-on-ci", "project": "tuf" },
+    { "repo": "dotfiles", "project": "tooling" },
+    { "repo": "pi-tools", "project": "tooling" }
+  ],
+  "planner": { "cwd": "~" }
+}

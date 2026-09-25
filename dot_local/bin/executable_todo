@@ -1,0 +1,3 @@
+#!/bin/sh
+# Quick capture: todo <text> [#project] [due:<date>]
+exec work add "$@"

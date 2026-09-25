@@ -23,7 +23,7 @@ const REFRESH_MODELS_SOURCE = '../../dd/datadog-pi-packages/packages/refresh-mod
 const REFRESH_MODELS_CHECKOUT = 'dd/datadog-pi-packages/packages/refresh-models';
 const RESEARCH_WEB_SOURCE = '../../dd/datadog-pi-packages/packages/research-web';
 const RESEARCH_WEB_CHECKOUT = 'dd/datadog-pi-packages/packages/research-web';
-const PI_TOOLS_SOURCE = 'git:git@github.com:dvdkrv/pi-tools.git@v0.1.1';
+const PI_TOOLS_SOURCE = 'git:git@github.com:dvdkrv/pi-tools.git@v0.2.1';
 const SUPERPOWERS_SOURCE = 'git:github.com/obra/superpowers@v6.2.0';
 
 function renderPiSettings({ withRefreshModels = false, withResearchWeb = false } = {}) {
@@ -142,7 +142,7 @@ test('pi settings load research-web only when its private checkout exists', () =
 test('pi package installer reconciles only signed git packages', () => {
   const script = readFileSync('run_onchange_after_06-install-pi-packages.sh.tmpl', 'utf8');
 
-  assert.match(script, /PI_TOOLS_PACKAGE="git:git@github\.com:dvdkrv\/pi-tools\.git@v0\.1\.1"/);
+  assert.match(script, /PI_TOOLS_PACKAGE="git:git@github\.com:dvdkrv\/pi-tools\.git@v0\.2\.1"/);
   assert.match(script, /SUPERPOWERS_PACKAGE="git:github\.com\/obra\/superpowers@v6\.2\.0"/);
   assert.match(script, /pi install "\$PI_TOOLS_PACKAGE"/);
   assert.match(script, /pi install "\$SUPERPOWERS_PACKAGE"/);
@@ -203,7 +203,7 @@ test('README documents canonical installation and delegation safety', () => {
   assert.doesNotMatch(readme, /local Pi packages/i);
   assert.doesNotMatch(readme, /npm run typecheck/);
   assert.doesNotMatch(readme, /`pi-\*`|`docs\/superpowers\/`/);
-  assert.match(readme, /signed .*pi-tools.*v0\.1\.1/i);
+  assert.match(readme, /signed .*pi-tools.*v0\.2\.1/i);
   assert.match(readme, /datadog-pi-packages\/packages\/refresh-models/);
   assert.match(readme, /\/refresh-models/);
   assert.match(readme, /checkout.*not.*clone|does not clone.*checkout/i);

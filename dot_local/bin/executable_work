@@ -1,0 +1,3 @@
+#!/bin/sh
+# Work tracker CLI from the pinned pi-tools package (see dot_pi/agent/settings.json.tmpl).
+exec node "$HOME/.pi/agent/git/github.com/dvdkrv/pi-tools/bin/work.ts" "$@"

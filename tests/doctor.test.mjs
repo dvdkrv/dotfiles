@@ -83,17 +83,17 @@ case "\${1:-}" in
         printf '%s\\n' '  git:github.com/obra/superpowers@v6.2.0'
         ;;
       missing-superpowers)
-        printf '%s\\n' '  git:git@github.com:dvdkrv/pi-tools.git@v0.1.1'
+        printf '%s\\n' '  git:git@github.com:dvdkrv/pi-tools.git@v0.2.1'
         ;;
       duplicate-pi-tools)
         printf '%s\\n' \\
-          '  git:git@github.com:dvdkrv/pi-tools.git@v0.1.1' \\
-          '  git:git@github.com:dvdkrv/pi-tools.git@v0.1.1' \\
+          '  git:git@github.com:dvdkrv/pi-tools.git@v0.2.1' \\
+          '  git:git@github.com:dvdkrv/pi-tools.git@v0.2.1' \\
           '  git:github.com/obra/superpowers@v6.2.0'
         ;;
       *)
         printf '%s\\n' \\
-          '  git:git@github.com:dvdkrv/pi-tools.git@v0.1.1' \\
+          '  git:git@github.com:dvdkrv/pi-tools.git@v0.2.1' \\
           '  git:github.com/obra/superpowers@v6.2.0'
         ;;
     esac
@@ -148,7 +148,7 @@ test('doctor accepts reviewed versions and warns for uninitialized optional stat
   assert.match(output, /Pi.*0\.84\.1/i);
   assert.match(output, /Node.*22\.19\.0/i);
   assert.match(output, /NATS.*2\.14\.6/i);
-  assert.match(output, /pi-tools.*v0\.1\.1/i);
+  assert.match(output, /pi-tools.*v0\.2\.1/i);
   assert.match(output, /Superpowers.*v6\.2\.0/i);
   assert.match(output, /theme.*(?:absent|not initialized)/i);
   assert.match(output, /broker.*(?:absent|not initialized)/i);
@@ -160,7 +160,7 @@ for (const [name, overrides, message] of [
   ['old Node', { FAKE_NODE_VERSION: 'v22.18.0' }, /Node.*22\.19\.0/i],
   ['old NATS', { FAKE_NATS_VERSION: '2.14.5' }, /NATS.*2\.14\.6/i],
   ['wrong NATS major', { FAKE_NATS_VERSION: '3.0.0' }, /NATS.*major.*2/i],
-  ['missing Pi tools', { FAKE_PI_LIST_MODE: 'missing-pi-tools' }, /pi-tools.*v0\.1\.1/i],
+  ['missing Pi tools', { FAKE_PI_LIST_MODE: 'missing-pi-tools' }, /pi-tools.*v0\.2\.1/i],
   ['missing Superpowers', { FAKE_PI_LIST_MODE: 'missing-superpowers' }, /Superpowers.*v6\.2\.0/i],
   ['duplicate Pi tools', { FAKE_PI_LIST_MODE: 'duplicate-pi-tools' }, /pi-tools.*exactly once/i],
 ]) {

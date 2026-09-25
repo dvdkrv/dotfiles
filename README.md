@@ -29,9 +29,13 @@ SSH configuration is managed through one validated marker block. Unbalanced mark
 
 ## Pi peer messaging
 
-The signed [`pi-tools`](https://github.com/dvdkrv/pi-tools) `v0.1.1` release lets explicitly joined Pi sessions exchange messages. A human-armed group allowance bounds automatic handoffs; agents cannot re-arm it. The package may ensure its private loopback NATS broker is ready, but loading it never joins, resumes, arms, delivers, reads pending bodies, or invokes a model.
+The signed [`pi-tools`](https://github.com/dvdkrv/pi-tools) `v0.2.1` release lets explicitly joined Pi sessions exchange messages. A human-armed group allowance bounds automatic handoffs; agents cannot re-arm it. The package may ensure its private loopback NATS broker is ready, but loading it never joins, resumes, arms, delivers, reads pending bodies, or invokes a model.
 
 See the package README for setup, lifecycle recovery, and isolated no-inference test commands.
+
+## Work tracker
+
+The same `pi-tools` release provides a local work tracker: `/todo`, `/triage`, and `/today` in Pi, plus the `work` and `todo` commands in `~/.local/bin`. Its configuration (`~/.config/work/config.json`) maps projects to Jira epics and repositories, and reads the Jira token from `pass` at call time. Data stays in `~/.local/share/work/`.
 
 The pinned [`pi-powerline-footer`](https://github.com/nicobailon/pi-powerline-footer) `0.17.2` footer shows the session cache hit rate (`cacheRead / (input + cacheRead)`) and, while a session has joined a group, the messaging status (`pi-messaging`) as a dedicated segment after the built-in ones. The pinned [`pi-markdown-preview`](https://www.npmjs.com/package/pi-markdown-preview) `0.18.1` package renders Markdown previews.
 
