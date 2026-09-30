@@ -6,6 +6,13 @@ unset _prefix
 
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 
+# Workspaces export BROWSER=xdg-open. Bundled xdg-open copies (e.g. in the npm `open` package) drop a bare
+# "xdg-open" to avoid calling themselves, so browser logins over SSH would fail. An absolute path survives.
+if [[ "${BROWSER:-}" == xdg-open ]] && _xdg_open="$(command -v xdg-open)" && [[ "$_xdg_open" == /* ]]; then
+  export BROWSER="$_xdg_open"
+fi
+unset _xdg_open
+
 # No D-Bus session bus on headless hosts. Without this, tools that probe for one (e.g. `gh auth token`)
 # autolaunch a dbus-daemon that never exits: about 2,500 leaked processes and 6 GB in one day.
 if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then

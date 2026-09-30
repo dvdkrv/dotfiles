@@ -212,6 +212,32 @@ test('zsh and tmux integrations are guarded and portable', () => {
   assert.doesNotMatch(tmux, /"pbcopy"/);
 });
 
+function browserAfterZshrc(browser) {
+  const home = mkdtempSync(join(tmpdir(), 'dotfiles-browser-'));
+  try {
+    mkdirSync(join(home, '.local', 'bin'), { recursive: true });
+    writeExecutable(join(home, '.local', 'bin', 'xdg-open'), '#!/bin/sh\n');
+    const zshrc = new URL('../.chezmoitemplates/zshrc', import.meta.url).pathname;
+    const env = { PATH: '/usr/bin:/bin', HOME: home, TERM: 'dumb' };
+    if (browser !== undefined) env.BROWSER = browser;
+    const result = spawnSync('zsh', ['-f', '-c', 'source "$1" >/dev/null 2>&1; print -rn -- "${BROWSER-<unset>}"', 'zsh', zshrc], {
+      env,
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return { home, browser: result.stdout };
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test('zshrc gives bare BROWSER=xdg-open an absolute path so bundled xdg-open copies keep it', () => {
+  const workspace = browserAfterZshrc('xdg-open');
+  assert.equal(workspace.browser, join(workspace.home, '.local', 'bin', 'xdg-open'));
+  assert.equal(browserAfterZshrc(undefined).browser, '<unset>');
+  assert.equal(browserAfterZshrc('/opt/custom/browser').browser, '/opt/custom/browser');
+});
+
 const tmuxPluginInstaller = 'run_onchange_after_07-install-tmux-plugins.sh';
 
 test('tmux session persistence plugins are pinned and loaded after the status bar', () => {
