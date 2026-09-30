@@ -5,6 +5,12 @@ done
 unset _prefix
 
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
+
+# No D-Bus session bus on headless hosts. Without this, tools that probe for one (e.g. `gh auth token`)
+# autolaunch a dbus-daemon that never exits: about 2,500 leaked processes and 6 GB in one day.
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+  export DBUS_SESSION_BUS_ADDRESS=disabled:
+fi
 if command -v zsh >/dev/null 2>&1; then
   export SHELL="$(command -v zsh)"
 fi
@@ -90,3 +96,6 @@ if command -v zoxide >/dev/null 2>&1; then
   eval "$(zoxide init zsh)"
   alias cd=z
 fi
+
+# dogbrew (internal package manager) shell integration, when installed.
+[ -f "/opt/dogbrew/share/etc/dogbrew/init.zsh" ] && . "/opt/dogbrew/share/etc/dogbrew/init.zsh"
