@@ -97,11 +97,15 @@ test('pi settings load the signed Pi tools release and pinned Superpowers exactl
 });
 
 const POWERLINE_SOURCE = 'npm:pi-powerline-footer@0.17.2';
+const DATADOG_SOURCE = 'npm:@datadog/pi-plugin@0.7.17';
 
-test('pi settings load the pinned npm UI packages exactly once', () => {
+test('pi settings load the pinned npm packages exactly once', () => {
   const settings = renderPiSettings();
 
-  for (const [source, name] of [[POWERLINE_SOURCE, 'pi-powerline-footer']]) {
+  for (const [source, name] of [
+    [POWERLINE_SOURCE, 'pi-powerline-footer'],
+    [DATADOG_SOURCE, '@datadog/pi-plugin'],
+  ]) {
     assert.equal(settings.packages.filter((entry) => entry === source).length, 1, source);
     assert.equal(settings.packages.filter((entry) => entry.includes(name)).length, 1, `${name} should be configured once`);
   }
@@ -148,6 +152,8 @@ test('pi package installer reconciles only signed git packages', () => {
   assert.match(script, /pi install "\$SUPERPOWERS_PACKAGE"/);
   assert.match(script, /POWERLINE_PACKAGE="npm:pi-powerline-footer@0\.17\.2"/);
   assert.match(script, /pi install "\$POWERLINE_PACKAGE"/);
+  assert.match(script, /DATADOG_PACKAGE="npm:@datadog\/pi-plugin@0\.7\.17"/);
+  assert.match(script, /pi install "\$DATADOG_PACKAGE"/);
   assert.doesNotMatch(script, /pi-markdown-preview/);
   assert.doesNotMatch(script, /LOCAL_PACKAGES|npm install --omit=dev|--prefix "\$pkg"/);
 });

@@ -41,6 +41,8 @@ The same `pi-tools` release provides a local work tracker: `/todo`, `/triage`, a
 
 The pinned [`pi-powerline-footer`](https://github.com/nicobailon/pi-powerline-footer) `0.17.2` footer shows the session cache hit rate (`cacheRead / (input + cacheRead)`) and, while a session has joined a group, the messaging status (`pi-messaging`) as a dedicated segment after the built-in ones.
 
+The pinned [`@datadog/pi-plugin`](https://github.com/datadog-labs/pi-plugin) `0.7.17` extension provides a preconfigured Datadog MCP server (logs, metrics, traces, dashboards, monitors). Run `/datadog` once in Pi to pick a site and sign in; credentials are reused across projects.
+
 ## Optional work model refresh
 
 When `~/dd/datadog-pi-packages/packages/refresh-models` already exists, the managed Pi settings load it as a private work extension and expose `/refresh-models`. The same applies to `~/dd/datadog-pi-packages/packages/research-web`. Dotfiles only declares existing checkouts; it does not clone, update, build, or install dependencies for that repository.
