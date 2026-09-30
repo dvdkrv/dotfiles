@@ -39,7 +39,7 @@ The same `pi-tools` release provides a local work tracker: `/todo`, `/triage`, a
 
 `prefix g` opens the work dashboard in a tmux popup: sessions waiting on you, running sessions and child agents, and background jobs with health checks. After a reboot, tmux-resurrect's post-restore hook runs `work restore --auto` to reopen the Pi sessions that were running.
 
-The pinned [`pi-powerline-footer`](https://github.com/nicobailon/pi-powerline-footer) `0.17.2` footer shows the session cache hit rate (`cacheRead / (input + cacheRead)`) and, while a session has joined a group, the messaging status (`pi-messaging`) as a dedicated segment after the built-in ones. The pinned [`pi-markdown-preview`](https://www.npmjs.com/package/pi-markdown-preview) `0.18.1` package renders Markdown previews.
+The pinned [`pi-powerline-footer`](https://github.com/nicobailon/pi-powerline-footer) `0.17.2` footer shows the session cache hit rate (`cacheRead / (input + cacheRead)`) and, while a session has joined a group, the messaging status (`pi-messaging`) as a dedicated segment after the built-in ones.
 
 ## Optional work model refresh
 

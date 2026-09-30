@@ -97,15 +97,15 @@ test('pi settings load the signed Pi tools release and pinned Superpowers exactl
 });
 
 const POWERLINE_SOURCE = 'npm:pi-powerline-footer@0.17.2';
-const MARKDOWN_PREVIEW_SOURCE = 'npm:pi-markdown-preview@0.18.1';
 
 test('pi settings load the pinned npm UI packages exactly once', () => {
   const settings = renderPiSettings();
 
-  for (const [source, name] of [[POWERLINE_SOURCE, 'pi-powerline-footer'], [MARKDOWN_PREVIEW_SOURCE, 'pi-markdown-preview']]) {
+  for (const [source, name] of [[POWERLINE_SOURCE, 'pi-powerline-footer']]) {
     assert.equal(settings.packages.filter((entry) => entry === source).length, 1, source);
     assert.equal(settings.packages.filter((entry) => entry.includes(name)).length, 1, `${name} should be configured once`);
   }
+  assert.equal(settings.packages.some((entry) => entry.includes('pi-markdown-preview')), false);
 });
 
 test('powerline shows cache hit rate and messaging status as a segment after the built-ins', () => {
@@ -148,8 +148,7 @@ test('pi package installer reconciles only signed git packages', () => {
   assert.match(script, /pi install "\$SUPERPOWERS_PACKAGE"/);
   assert.match(script, /POWERLINE_PACKAGE="npm:pi-powerline-footer@0\.17\.2"/);
   assert.match(script, /pi install "\$POWERLINE_PACKAGE"/);
-  assert.match(script, /MARKDOWN_PREVIEW_PACKAGE="npm:pi-markdown-preview@0\.18\.1"/);
-  assert.match(script, /pi install "\$MARKDOWN_PREVIEW_PACKAGE"/);
+  assert.doesNotMatch(script, /pi-markdown-preview/);
   assert.doesNotMatch(script, /LOCAL_PACKAGES|npm install --omit=dev|--prefix "\$pkg"/);
 });
 
