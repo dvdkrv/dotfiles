@@ -30,6 +30,14 @@ jobs:
             | sudo tar -xz -C /opt
           echo "/opt/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
 
+      # Match the Brewfile's tmux; Ubuntu's apt tmux rejects options the config uses.
+      - name: Install tmux from Homebrew
+        run: |
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          brew install tmux
+          sudo ln -sf "$(brew --prefix)/bin/tmux" /usr/local/bin/tmux
+          tmux -V
+
       - run: npm ci --ignore-scripts
       - run: npm test
       - run: npm run lint:shell
