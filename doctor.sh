@@ -8,7 +8,7 @@ GREEN=$'\033[32m'
 YELLOW=$'\033[33m'
 RESET=$'\033[0m'
 
-EXPECTED_PI_VERSION="0.84.1"
+EXPECTED_PI_VERSION="0.99.1"
 EXPECTED_PI_TOOLS="git:git@github.com:dvdkrv/pi-tools.git@v0.4.1"
 EXPECTED_SUPERPOWERS="git:github.com/obra/superpowers@v6.2.0"
 MIN_NODE_VERSION="22.19.0"
