@@ -129,5 +129,12 @@
   "notifications": true,
   "dashboard": {
     "showTriage": false
+  },
+  "messaging": {
+    "autoJoin": true,
+    "sendsPerHour": 10,
+    "paused": false,
+    "retentionDays": 30,
+    "routeCooldownMinutes": 10
   }
 }
