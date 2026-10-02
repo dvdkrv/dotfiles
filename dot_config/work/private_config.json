@@ -89,6 +89,9 @@
   "bashTimeoutMinutes": 30,
   "children": {
     "defaultModel": "ai-gw-openai/openai/gpt-5.6-sol",
+    "allowedModels": [
+      "ai-gw-*"
+    ],
     "diffBudget": {
       "defaultLines": 300,
       "defaultFiles": 8,
