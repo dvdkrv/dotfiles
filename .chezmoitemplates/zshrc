@@ -38,14 +38,32 @@ export PIPX_HOME="$HOME/.local/share/pipx"
 export PIPX_BIN_DIR="$HOME/.local/bin"
 export SUPERPOWERS_DISABLE_TELEMETRY=1
 
-# Stable SSH agent socket for long-running processes.
-if [[ -n "${SSH_AUTH_SOCK:-}" && "$SSH_AUTH_SOCK" != "$HOME/.ssh/ssh_auth_sock" ]]; then
+# Stable SSH agent socket for long-running processes; it only ever points at a live agent.
+# ssh-add -l exits 2 when it cannot reach an agent.
+_agent_alive() {
+  [[ -S "$1" ]] || return 1
+  SSH_AUTH_SOCK="$1" ssh-add -l >/dev/null 2>&1
+  (( $? != 2 ))
+}
+_link="$HOME/.ssh/ssh_auth_sock"
+if [[ -n "${SSH_AUTH_SOCK:-}" && "$SSH_AUTH_SOCK" != "$_link" ]] && _agent_alive "$SSH_AUTH_SOCK"; then
   mkdir -p "$HOME/.ssh"
-  ln -sf "$SSH_AUTH_SOCK" "$HOME/.ssh/ssh_auth_sock" 2>/dev/null
+  ln -sfn "$SSH_AUTH_SOCK" "$_link" 2>/dev/null
+elif ! _agent_alive "$_link"; then
+  # The login that owned the link has ended: use another live forwarded agent of ours, newest first.
+  for _sock in /tmp/ssh-*/agent.*(N=om); do
+    if [[ -O "$_sock" ]] && _agent_alive "$_sock"; then
+      mkdir -p "$HOME/.ssh"
+      ln -sfn "$_sock" "$_link" 2>/dev/null
+      break
+    fi
+  done
 fi
-if [[ -S "$HOME/.ssh/ssh_auth_sock" || -L "$HOME/.ssh/ssh_auth_sock" ]]; then
-  export SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"
+if [[ -S "$_link" || -L "$_link" ]]; then
+  export SSH_AUTH_SOCK="$_link"
 fi
+unset _link _sock
+unfunction _agent_alive
 
 # Export current theme so remote tmux sessions can pick it up via SendEnv.
 if [[ -z "${LC_TERMINAL_THEME:-}" ]]; then
