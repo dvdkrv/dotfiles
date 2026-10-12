@@ -39,11 +39,12 @@ export PIPX_BIN_DIR="$HOME/.local/bin"
 export SUPERPOWERS_DISABLE_TELEMETRY=1
 
 # Stable SSH agent socket for long-running processes; it only ever points at a live agent.
-# ssh-add -l exits 2 when it cannot reach an agent.
+# A local connect tells a live socket from one whose login ended, without a round trip to the agent.
 _agent_alive() {
   [[ -S "$1" ]] || return 1
-  SSH_AUTH_SOCK="$1" ssh-add -l >/dev/null 2>&1
-  (( $? != 2 ))
+  zmodload zsh/net/socket 2>/dev/null || return 0
+  zsocket "$1" 2>/dev/null || return 1
+  exec {REPLY}>&-
 }
 _link="$HOME/.ssh/ssh_auth_sock"
 if [[ -n "${SSH_AUTH_SOCK:-}" && "$SSH_AUTH_SOCK" != "$_link" ]] && _agent_alive "$SSH_AUTH_SOCK"; then
