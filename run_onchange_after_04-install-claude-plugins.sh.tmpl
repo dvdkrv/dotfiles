@@ -4,9 +4,8 @@
 # marketplaces and already-installed plugins.
 #
 # Marketplaces and plugins are kept in sync with the enabledPlugins block
-# in dot_claude/settings.json.tmpl. Most marketplaces (datadog-claude-plugins,
-# claude-plugins-official, claude-code-plugins) are bootstrapped out-of-band
-# by other tooling; this script handles personal additions only.
+# in the personal Claude settings. Other marketplaces are bootstrapped
+# out-of-band by other tooling; this script handles personal additions only.
 set -e
 
 command -v claude &>/dev/null || exit 0

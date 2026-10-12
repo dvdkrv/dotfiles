@@ -269,7 +269,7 @@ if command -v chezmoi >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
     for file in "$repo"/dot_claude/*.json.tmpl "$repo"/dot_claude/**/*.json.tmpl "$repo"/dot_pi/**/*.json.tmpl; do
         [[ -e "$file" ]] || continue
         any=1
-        if chezmoi execute-template < "$file" | jq -e . >/dev/null 2>&1; then
+        if chezmoi execute-template --source "$repo" < "$file" | jq -e . >/dev/null 2>&1; then
             ok "renders: ${file#"$repo"/}"
         else
             bad "broken:  ${file#"$repo"/}"

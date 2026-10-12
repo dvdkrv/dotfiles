@@ -1,0 +1,21 @@
+{{- /* Merge an optional overlay JSON file into base settings and print the result.
+       .base: settings map; .path: overlay file; .lists: dotted paths (at most two levels) of lists
+       that collect entries, which are concatenated personal-first without duplicates.
+       Every other key is deep-merged, with the overlay winning. */ -}}
+{{- $base := deepCopy .base -}}
+{{- $overlay := dict -}}
+{{- if stat .path -}}{{- $overlay = include .path | fromJson -}}{{- end -}}
+{{- $merged := mergeOverwrite (deepCopy $base) (deepCopy $overlay) -}}
+{{- range .lists -}}
+{{-   $parts := splitList "." . -}}
+{{-   if eq (len $parts) 1 -}}
+{{-     $key := index $parts 0 -}}
+{{-     $all := concat (get $base $key | default list) (get $overlay $key | default list) | uniq -}}
+{{-     if $all -}}{{- $_ := set $merged $key $all -}}{{- end -}}
+{{-   else -}}
+{{-     $parent := index $parts 0 -}}{{- $key := index $parts 1 -}}
+{{-     $all := concat (get (get $base $parent | default dict) $key | default list) (get (get $overlay $parent | default dict) $key | default list) | uniq -}}
+{{-     if $all -}}{{- $_ := set (get $merged $parent) $key $all -}}{{- end -}}
+{{-   end -}}
+{{- end -}}
+{{- $merged | toPrettyJson -}}

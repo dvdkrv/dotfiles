@@ -19,25 +19,15 @@ function pkg(path) {
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SETTINGS_TEMPLATE = join(REPOSITORY_ROOT, 'dot_pi/agent/settings.json.tmpl');
-const REFRESH_MODELS_SOURCE = '../../dd/datadog-pi-packages/packages/refresh-models';
-const REFRESH_MODELS_CHECKOUT = 'dd/datadog-pi-packages/packages/refresh-models';
-const RESEARCH_WEB_SOURCE = '../../dd/datadog-pi-packages/packages/research-web';
-const RESEARCH_WEB_CHECKOUT = 'dd/datadog-pi-packages/packages/research-web';
 const PI_TOOLS_SOURCE = 'git:git@github.com:dvdkrv/pi-tools.git@v0.6.3';
 const SUPERPOWERS_SOURCE = 'git:github.com/obra/superpowers@v6.2.0';
 
-function renderPiSettings({ withRefreshModels = false, withResearchWeb = false } = {}) {
+function renderPiSettings() {
   const root = mkdtempSync(join(tmpdir(), 'dotfiles-pi-settings-'));
   const home = join(root, 'home');
   const config = join(root, 'chezmoi.toml');
   const state = join(root, 'chezmoi.boltdb');
   mkdirSync(home, { recursive: true });
-  if (withRefreshModels) {
-    mkdirSync(join(home, REFRESH_MODELS_CHECKOUT), { recursive: true });
-  }
-  if (withResearchWeb) {
-    mkdirSync(join(home, RESEARCH_WEB_CHECKOUT), { recursive: true });
-  }
   writeFileSync(config, `sourceDir = ${JSON.stringify(REPOSITORY_ROOT)}\n`, 'utf8');
 
   try {
@@ -97,14 +87,12 @@ test('pi settings load the signed Pi tools release and pinned Superpowers exactl
 });
 
 const POWERLINE_SOURCE = 'npm:pi-powerline-footer@0.17.2';
-const DATADOG_SOURCE = 'npm:@datadog/pi-plugin@0.7.17';
 
 test('pi settings load the pinned npm packages exactly once', () => {
   const settings = renderPiSettings();
 
   for (const [source, name] of [
     [POWERLINE_SOURCE, 'pi-powerline-footer'],
-    [DATADOG_SOURCE, '@datadog/pi-plugin'],
   ]) {
     assert.equal(settings.packages.filter((entry) => entry === source).length, 1, source);
     assert.equal(settings.packages.filter((entry) => entry.includes(name)).length, 1, `${name} should be configured once`);
@@ -124,25 +112,6 @@ test('powerline shows cache hit rate and messaging status as a segment after the
   assert.equal(powerline.layout, undefined, 'default preset order should stay intact');
 });
 
-test('pi settings load refresh-models only when its private checkout exists', () => {
-  const absent = renderPiSettings();
-  const present = renderPiSettings({ withRefreshModels: true });
-
-  assert.equal(absent.packages.filter((source) => source === REFRESH_MODELS_SOURCE).length, 0);
-  assert.equal(present.packages.filter((source) => source === REFRESH_MODELS_SOURCE).length, 1);
-});
-
-test('pi settings load research-web only when its private checkout exists', () => {
-  const absent = renderPiSettings({ withRefreshModels: true });
-  const present = renderPiSettings({ withResearchWeb: true });
-  const both = renderPiSettings({ withRefreshModels: true, withResearchWeb: true });
-
-  assert.equal(absent.packages.filter((source) => source === RESEARCH_WEB_SOURCE).length, 0);
-  assert.equal(present.packages.filter((source) => source === RESEARCH_WEB_SOURCE).length, 1);
-  assert.equal(present.packages.filter((source) => source === REFRESH_MODELS_SOURCE).length, 0);
-  assert.deepEqual(both.packages.slice(-2), [REFRESH_MODELS_SOURCE, RESEARCH_WEB_SOURCE]);
-});
-
 test('pi package installer reconciles only signed git packages', () => {
   const script = readFileSync('run_onchange_after_06-install-pi-packages.sh.tmpl', 'utf8');
 
@@ -152,8 +121,6 @@ test('pi package installer reconciles only signed git packages', () => {
   assert.match(script, /pi install "\$SUPERPOWERS_PACKAGE"/);
   assert.match(script, /POWERLINE_PACKAGE="npm:pi-powerline-footer@0\.17\.2"/);
   assert.match(script, /pi install "\$POWERLINE_PACKAGE"/);
-  assert.match(script, /DATADOG_PACKAGE="npm:@datadog\/pi-plugin@0\.7\.17"/);
-  assert.match(script, /pi install "\$DATADOG_PACKAGE"/);
   assert.doesNotMatch(script, /pi-markdown-preview/);
   assert.doesNotMatch(script, /LOCAL_PACKAGES|npm install --omit=dev|--prefix "\$pkg"/);
 });
@@ -209,10 +176,8 @@ test('README documents canonical installation and delegation safety', () => {
   assert.doesNotMatch(readme, /npm run typecheck/);
   assert.doesNotMatch(readme, /`pi-\*`|`docs\/superpowers\/`/);
   assert.match(readme, /signed .*pi-tools.*v0\.6\.3/i);
-  assert.match(readme, /datadog-pi-packages\/packages\/refresh-models/);
-  assert.match(readme, /\/refresh-models/);
-  assert.match(readme, /checkout.*not.*clone|does not clone.*checkout/i);
   assert.match(readme, /\/reload/);
+  assert.match(readme, /dotfiles-overlay/);
 });
 
 test('nvim-pack-lock is the sole Neovim plugin lockfile', () => {

@@ -13,8 +13,8 @@ tests/
 scripts/
 **/node_modules/**
 
-# Deploy ~/.personal-zshrc on work machine, ~/.zshrc everywhere else
-{{ if (index . "work") -}}
+# Deploy ~/.personal-zshrc where another system manages ~/.zshrc, ~/.zshrc everywhere else
+{{ if or (get . "managedZshrc") (get . "work") -}}
 .zshrc
 {{ else -}}
 .personal-zshrc

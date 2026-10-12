@@ -94,7 +94,7 @@ test('chezmoi excludes repository-only roots from the home target state', () => 
   for (const file of ['README.md', 'package.json', 'package-lock.json']) {
     assert.match(ignore, new RegExp(`^${file.replace('.', '\\.')}$`, 'm'));
   }
-  assert.match(ignore, /\{\{ if \(index \. "work"\) -\}\}/);
+  assert.match(ignore, /\{\{ if or \(get \. "managedZshrc"\) \(get \. "work"\) -\}\}/);
   assert.doesNotMatch(ignore, /default false \.work/);
 });
 
@@ -182,7 +182,7 @@ test('Pi and package installers are pinned and do not hide required failures', (
 });
 
 test('Claude settings do not reference missing UI or bypass safety prompts', () => {
-  const settings = JSON.parse(repositoryFile('dot_claude/settings.json.tmpl'));
+  const settings = JSON.parse(repositoryFile('.chezmoitemplates/claude-settings.json'));
 
   assert.equal(settings.statusLine, undefined);
   assert.equal(settings.sandbox.autoAllowBashIfSandboxed, false);

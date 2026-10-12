@@ -11,6 +11,16 @@ if git grep -in -- "$removed_transport"; then
 fi
 unset removed_transport
 
+# Repository boundary: no employer identifiers in tracked files; they belong in the private layer.
+# Spelled in octal so that this file passes its own check.
+boundary_pattern="$(printf '\144\141\164\141\144\157\147|\144\144\157\147|\144\157\147\142\162\145\167|\141\151\055\147\167')"
+if git grep -nIiE -- "$boundary_pattern"; then
+  echo "Employer identifier in tracked files; move it to the private layer" >&2
+  exit 1
+fi
+unset boundary_pattern
+# End repository boundary
+
 check_tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-check.XXXXXX")"
 chezmoi_config="$check_tmpdir/chezmoi.toml"
 : >"$chezmoi_config"

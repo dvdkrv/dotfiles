@@ -1,5 +1,11 @@
-{{- $work := promptBoolOnce . "work" "Ansible-managed ~/.zshrc on this machine?" -}}
+{{- /* managedZshrc: this machine's ~/.zshrc is managed by another system, so ~/.personal-zshrc is deployed instead.
+       The former name "work" is still read. */ -}}
+{{- $managedZshrc := false -}}
+{{- if hasKey . "managedZshrc" -}}{{- $managedZshrc = .managedZshrc -}}
+{{- else if hasKey . "work" -}}{{- $managedZshrc = .work -}}
+{{- else -}}{{- $managedZshrc = promptBool "Is ~/.zshrc on this machine managed by another system (e.g. Ansible)?" -}}
+{{- end -}}
 sourceDir = {{ .chezmoi.sourceDir | quote }}
 
 [data]
-    work = {{ $work }}
+    managedZshrc = {{ $managedZshrc }}

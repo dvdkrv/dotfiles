@@ -104,7 +104,7 @@ esac
   writeExecutable(join(bin, 'chezmoi'), `#!/usr/bin/env bash
 case "\${1:-}" in
   doctor) exit 0 ;;
-  execute-template) exec ${JSON.stringify(realChezmoi)} execute-template ;;
+  execute-template) exec ${JSON.stringify(realChezmoi)} "$@" ;;
   *) exit 0 ;;
 esac
 `);

@@ -35,19 +35,23 @@ See the package README for setup, lifecycle recovery, and isolated no-inference 
 
 ## Work tracker
 
-The same `pi-tools` release provides a local work tracker: `/todo`, `/triage`, and `/today` in Pi, plus the `work` and `todo` commands in `~/.local/bin`. Its configuration (`~/.config/work/config.json`) maps projects to Jira epics and repositories, and reads the Jira token from `pass` at call time. Data stays in `~/.local/share/work/`.
+The same `pi-tools` release provides a local work tracker: `/todo`, `/triage`, and `/today` in Pi, plus the `work` and `todo` commands in `~/.local/bin`. Its configuration (`~/.config/work/config.json`) is not managed here: a private layer may provide it. Data stays in `~/.local/share/work/`.
 
 `prefix g` opens the work dashboard in a tmux popup: sessions waiting on you, running sessions and child agents, and background jobs with health checks. After a reboot, tmux-resurrect's post-restore hook runs `work restore --auto` to reopen the Pi sessions that were running.
 
 The pinned [`pi-powerline-footer`](https://github.com/nicobailon/pi-powerline-footer) `0.17.2` footer shows the session cache hit rate (`cacheRead / (input + cacheRead)`) and, while a session has joined a group, the messaging status (`pi-messaging`) as a dedicated segment after the built-in ones.
 
-The pinned [`@datadog/pi-plugin`](https://github.com/datadog-labs/pi-plugin) `0.7.17` extension provides a preconfigured Datadog MCP server (logs, metrics, traces, dashboards, monitors). Run `/datadog` once in Pi to pick a site and sign in; credentials are reused across projects.
+## Optional private layer
 
-## Optional work model refresh
+A private layer, installed separately, can add settings through `~/.config/dotfiles-overlay/`. Without it, chezmoi applies the plain personal setup:
 
-When `~/dd/datadog-pi-packages/packages/refresh-models` already exists, the managed Pi settings load it as a private work extension and expose `/refresh-models`. The same applies to `~/dd/datadog-pi-packages/packages/research-web`. Dotfiles only declares existing checkouts; it does not clone, update, build, or install dependencies for that repository.
+- `zshrc` is sourced at the end of the zshrc.
+- `pi-settings.json` is merged into the Pi settings: its `packages` are added after the personal ones, and its other keys win.
+- `claude-settings.json` is merged into the Claude Code settings: its permission lists are added, and its other keys win.
 
-After applying a settings change, start a new Pi process or run `/reload` at an explicit idle boundary. Updating the private checkout also requires an explicit reload before an existing Pi process uses the new code.
+The private layer installs its own packages and plugins, and any files it owns. See `docs/specs/2026-10-12-overlay-hooks-design.md`.
+
+After applying a settings change, start a new Pi process or run `/reload` at an explicit idle boundary. Updating a local package checkout also requires an explicit reload before an existing Pi process uses the new code.
 
 ## Development
 
