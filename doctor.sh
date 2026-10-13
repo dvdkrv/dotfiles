@@ -178,13 +178,6 @@ if [[ -f "$ssh_config" ]]; then
     fi
 fi
 
-printf "\n== claude hooks ==\n"
-if [[ -x "$HOME/.claude/hooks/ssh-agent-check.sh" ]]; then
-    ok "$HOME/.claude/hooks/ssh-agent-check.sh is executable"
-else
-    bad "$HOME/.claude/hooks/ssh-agent-check.sh missing or not executable"
-fi
-
 printf "\n== ssh agent ==\n"
 sock="$HOME/.ssh/ssh_auth_sock"
 if [[ -L "$sock" ]]; then
@@ -266,7 +259,7 @@ printf "\n== json templates render ==\n"
 if command -v chezmoi >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
     repo="$(cd "$(dirname "$0")" && pwd)"
     any=0
-    for file in "$repo"/dot_claude/*.json.tmpl "$repo"/dot_claude/**/*.json.tmpl "$repo"/dot_pi/**/*.json.tmpl; do
+    for file in "$repo"/dot_pi/**/*.json.tmpl; do
         [[ -e "$file" ]] || continue
         any=1
         if chezmoi execute-template --source "$repo" < "$file" | jq -e . >/dev/null 2>&1; then

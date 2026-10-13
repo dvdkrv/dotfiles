@@ -1,2 +1,0 @@
-{{- /* Personal Claude Code settings, merged with an optional private overlay (see docs/specs/2026-10-12-overlay-hooks-design.md). */ -}}
-{{- template "overlay-merge" (dict "base" (includeTemplate ".chezmoitemplates/claude-settings.json" . | fromJson) "path" (joinPath .chezmoi.homeDir ".config/dotfiles-overlay/claude-settings.json") "lists" (list "permissions.allow" "permissions.deny" "permissions.ask")) }}

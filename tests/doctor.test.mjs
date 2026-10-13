@@ -27,13 +27,10 @@ function doctorHarness(overrides = {}) {
   const stateHome = join(root, 'state');
   const agentDir = join(root, 'agent');
   const sshDir = join(home, '.ssh');
-  const claudeHooks = join(home, '.claude', 'hooks');
   mkdirSync(bin, { recursive: true });
   mkdirSync(stateHome, { recursive: true });
   mkdirSync(agentDir, { recursive: true });
   mkdirSync(sshDir, { recursive: true, mode: 0o700 });
-  mkdirSync(claudeHooks, { recursive: true });
-  writeExecutable(join(claudeHooks, 'ssh-agent-check.sh'), '#!/usr/bin/env bash\nexit 0\n');
   writeFileSync(
     join(sshDir, 'config'),
     'Host example\n  User git\n\n## BEGIN -- chezmoi\nInclude ~/.ssh/config_chezmoi\n## END -- chezmoi\n',

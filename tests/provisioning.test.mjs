@@ -172,31 +172,11 @@ test('cross-platform package bundle provisions the Pi messaging broker', () => {
 test('Pi and package installers are pinned and do not hide required failures', () => {
   const piInstaller = repositoryFile('run_onchange_after_05-install-pi.sh.tmpl');
   const packageInstaller = repositoryFile('run_onchange_after_06-install-pi-packages.sh.tmpl');
-  const claudeInstaller = repositoryFile('run_onchange_after_04-install-claude-plugins.sh.tmpl');
 
   assert.match(piInstaller, /^PI_VERSION="1\.0\.0"$/m);
   assert.match(piInstaller, /@earendil-works\/pi-coding-agent@"\$PI_VERSION"/);
   assert.doesNotMatch(packageInstaller, /pi install .*\|\| true/);
   assert.doesNotMatch(packageInstaller, /command -v (?:pi|npm).*\|\| exit 0/);
-  assert.doesNotMatch(claudeInstaller, /plugin (?:marketplace add|install).*\|\| true/);
-});
-
-test('Claude settings do not reference missing UI or bypass safety prompts', () => {
-  const settings = JSON.parse(repositoryFile('.chezmoitemplates/claude-settings.json'));
-
-  assert.equal(settings.statusLine, undefined);
-  assert.equal(settings.sandbox.autoAllowBashIfSandboxed, false);
-  assert.equal(settings.skipAutoPermissionPrompt, false);
-  for (const permission of [
-    'Bash(find:*)',
-    'Bash(git add:*)',
-    'Bash(git commit:*)',
-    'Bash(git merge:*)',
-    'Bash(git pull:*)',
-    'Bash(git restore:*)',
-  ]) {
-    assert.equal(settings.permissions.allow.includes(permission), false, `${permission} should require confirmation`);
-  }
 });
 
 test('zsh and tmux integrations are guarded and portable', () => {
@@ -437,7 +417,7 @@ test('clipboard helper uses the first supported backend', () => {
   mkdirSync(bin);
   const backend = join(bin, 'pbcopy');
   writeFileSync(backend, '#!/usr/bin/env bash\ncat > "$OUTPUT"\n', { mode: 0o755 });
-  const helper = new URL('../dot_local/bin/copy-to-clipboard.sh', import.meta.url).pathname;
+  const helper = new URL('../dot_local/bin/executable_copy-to-clipboard.sh', import.meta.url).pathname;
 
   const result = spawnSync('/bin/bash', [helper], {
     input: 'portable clipboard',

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "lint:shell": "shellcheck -x *.sh *.sh.tmpl dot_claude/hooks/*.sh dot_local/bin/*.sh scripts/*.sh",
+    "lint:shell": "shellcheck -x *.sh *.sh.tmpl dot_local/bin/*.sh scripts/*.sh",
     "check": "bash scripts/check-repository.sh"
   }
 }

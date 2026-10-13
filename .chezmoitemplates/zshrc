@@ -80,10 +80,6 @@ fi
 if command -v nvim >/dev/null 2>&1; then
   alias vim=nvim
 fi
-if [[ -f "$HOME/.claude/hooks/peon-ping/peon.sh" ]]; then
-  alias peon='bash ~/.claude/hooks/peon-ping/peon.sh'
-fi
-[[ -f "$HOME/.claude/hooks/peon-ping/completions.bash" ]] && source "$HOME/.claude/hooks/peon-ping/completions.bash"
 
 if command -v fzf >/dev/null 2>&1; then
   source <(fzf --zsh)

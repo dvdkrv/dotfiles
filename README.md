@@ -47,7 +47,6 @@ A private layer, installed separately, can add settings through `~/.config/dotfi
 
 - `zshrc` is sourced at the end of the zshrc.
 - `pi-settings.json` is merged into the Pi settings: its `packages` are added after the personal ones, and its other keys win.
-- `claude-settings.json` is merged into the Claude Code settings: its permission lists are added, and its other keys win.
 
 The private layer installs its own packages and plugins, and any files it owns. See `docs/specs/2026-10-12-overlay-hooks-design.md`.
 

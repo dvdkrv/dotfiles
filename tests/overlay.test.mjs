@@ -33,7 +33,6 @@ function render(templatePath, overlay = {}) {
   }
 }
 const pi = (overlay) => JSON.parse(render('dot_pi/agent/settings.json.tmpl', overlay).output);
-const claude = (overlay) => JSON.parse(render('dot_claude/settings.json.tmpl', overlay).output);
 
 test('without an overlay, Pi settings hold only personal entries', () => {
   const settings = pi();
@@ -56,25 +55,6 @@ test('an overlay adds Pi packages after personal ones, without duplicates, and i
   assert.equal(settings.theme, 'dark');
   assert.equal(settings.powerline.preset, 'compact');
   assert.deepEqual(settings.powerline.customItems, personal.powerline.customItems, 'objects merge key by key');
-});
-
-test('without an overlay, Claude settings hold only personal entries', () => {
-  const settings = claude();
-  assert.ok(settings.permissions.allow.length > 0);
-  assert.ok(Object.keys(settings.enabledPlugins).length > 0);
-  assert.match(JSON.stringify(settings.hooks), /\/\.claude\/hooks\/ssh-agent-check\.sh/);
-});
-
-test('an overlay adds Claude permissions and plugins', () => {
-  const personal = claude();
-  const settings = claude({ 'claude-settings.json': {
-    permissions: { allow: [personal.permissions.allow[0], 'mcp__private__search'], ask: ['Bash(deploy:*)'] },
-    enabledPlugins: { 'private@private-marketplace': true },
-  } });
-  assert.deepEqual(settings.permissions.allow, [...personal.permissions.allow, 'mcp__private__search']);
-  assert.deepEqual(settings.permissions.ask, [...(personal.permissions.ask ?? []), 'Bash(deploy:*)']);
-  assert.equal(settings.enabledPlugins['private@private-marketplace'], true);
-  for (const plugin of Object.keys(personal.enabledPlugins)) assert.equal(settings.enabledPlugins[plugin], personal.enabledPlugins[plugin]);
 });
 
 test('zshrc sources the overlay zshrc last, when it exists', () => {
