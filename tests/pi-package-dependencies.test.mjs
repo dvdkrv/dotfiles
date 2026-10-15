@@ -19,7 +19,7 @@ function pkg(path) {
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SETTINGS_TEMPLATE = join(REPOSITORY_ROOT, 'dot_pi/agent/settings.json.tmpl');
-const PI_TOOLS_SOURCE = 'git:git@github.com:dvdkrv/pi-tools.git@v0.6.3';
+const PI_TOOLS_SOURCE = 'git:git@github.com:dvdkrv/pi-tools.git@v0.6.4';
 const SUPERPOWERS_SOURCE = 'git:github.com/obra/superpowers@v6.2.0';
 
 function renderPiSettings() {
@@ -115,7 +115,7 @@ test('powerline shows cache hit rate and messaging status as a segment after the
 test('pi package installer reconciles only signed git packages', () => {
   const script = readFileSync('run_onchange_after_06-install-pi-packages.sh.tmpl', 'utf8');
 
-  assert.match(script, /PI_TOOLS_PACKAGE="git:git@github\.com:dvdkrv\/pi-tools\.git@v0\.6\.3"/);
+  assert.match(script, /PI_TOOLS_PACKAGE="git:git@github\.com:dvdkrv\/pi-tools\.git@v0\.6\.4"/);
   assert.match(script, /SUPERPOWERS_PACKAGE="git:github\.com\/obra\/superpowers@v6\.2\.0"/);
   assert.match(script, /pi install "\$PI_TOOLS_PACKAGE"/);
   assert.match(script, /pi install "\$SUPERPOWERS_PACKAGE"/);
@@ -175,7 +175,7 @@ test('README documents canonical installation and delegation safety', () => {
   assert.doesNotMatch(readme, /local Pi packages/i);
   assert.doesNotMatch(readme, /npm run typecheck/);
   assert.doesNotMatch(readme, /`pi-\*`|`docs\/superpowers\/`/);
-  assert.match(readme, /signed .*pi-tools.*v0\.6\.3/i);
+  assert.match(readme, /signed .*pi-tools.*v0\.6\.4/i);
   assert.match(readme, /\/reload/);
   assert.match(readme, /dotfiles-overlay/);
 });

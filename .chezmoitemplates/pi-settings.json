@@ -1,6 +1,6 @@
 {
   "packages": [
-    "git:git@github.com:dvdkrv/pi-tools.git@v0.6.3",
+    "git:git@github.com:dvdkrv/pi-tools.git@v0.6.4",
     "git:github.com/obra/superpowers@v6.2.0",
     "npm:pi-powerline-footer@0.17.2"
   ],
