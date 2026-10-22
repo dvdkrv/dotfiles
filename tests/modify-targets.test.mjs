@@ -86,6 +86,14 @@ test('zshrc never moves lines edited in place; only lines after the managed cont
   assert.equal(once, `${managed}\n${MARKER}\n${INSTALLER_LINE}\n`);
 });
 
+test('zshrc keeps a whole appended block on first apply, even lines the managed zshrc also has', () => {
+  const managed = render('.zshrc');
+  const block = 'if [ -f "/opt/tool/env.zsh" ]; then\n  . "/opt/tool/env.zsh"\n\n  export TOOL=1\nfi';
+  const once = render('.zshrc', `${managed}\n${block}\n\n`);
+  assert.equal(once, `${managed}\n${MARKER}\n${block}\n`);
+  assert.equal(render('.zshrc', once), once);
+});
+
 test('zshrc drops kept lines only when they are deleted by hand', () => {
   const managed = render('.zshrc');
   const once = render('.zshrc', `${managed}\n${INSTALLER_LINE}\n`);
