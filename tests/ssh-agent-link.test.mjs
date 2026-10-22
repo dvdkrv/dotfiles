@@ -40,11 +40,33 @@ function harness(t) {
   return { live, dead, link, run };
 }
 
-test('a new login with a live agent takes over the link', (t) => {
+test('a new login with a live agent takes over a missing or dead link', (t) => {
   const h = harness(t);
   const agent = h.live('login');
   assert.equal(h.run(agent), h.link);
   assert.equal(readlinkSync(h.link), agent);
+  rmSync(h.link);
+  symlinkSync(h.dead('ended'), h.link);
+  const next = h.live('next');
+  assert.equal(h.run(next), h.link);
+  assert.equal(readlinkSync(h.link), next);
+});
+
+test('a live link is kept when a new login arrives (e.g. a long-lived tunnel session)', (t) => {
+  const h = harness(t);
+  const tunnel = h.live('tunnel');
+  symlinkSync(tunnel, h.link);
+  assert.equal(h.run(h.live('login')), h.link);
+  assert.equal(readlinkSync(h.link), tunnel);
+});
+
+test('symlinked sockets are never linked, so the link cannot loop', (t) => {
+  const h = harness(t);
+  const agent = h.live('real');
+  const alias = h.dead('alias');
+  symlinkSync(agent, alias);
+  assert.equal(h.run(alias), h.link);
+  assert.equal(readlinkSync(h.link), agent, 'the fallback picks the real socket, not the symlink');
 });
 
 test('a shell that inherited a dead agent keeps the live link', (t) => {

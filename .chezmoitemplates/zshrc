@@ -47,13 +47,15 @@ _agent_alive() {
   exec {REPLY}>&-
 }
 _link="$HOME/.ssh/ssh_auth_sock"
-if [[ -n "${SSH_AUTH_SOCK:-}" && "$SSH_AUTH_SOCK" != "$_link" ]] && _agent_alive "$SSH_AUTH_SOCK"; then
+# Keep an existing live link (e.g. the long-lived bb ssh-tunnel session) rather than the newest login.
+# Ignore symlinked sockets: real sshd agent sockets never are, and following one can create a loop.
+if ! _agent_alive "$_link" && [[ -n "${SSH_AUTH_SOCK:-}" && ! -L "$SSH_AUTH_SOCK" && "$SSH_AUTH_SOCK" != "$_link" ]] && _agent_alive "$SSH_AUTH_SOCK"; then
   mkdir -p "$HOME/.ssh"
   ln -sfn "$SSH_AUTH_SOCK" "$_link" 2>/dev/null
 elif ! _agent_alive "$_link"; then
   # The login that owned the link has ended: use another live forwarded agent of ours, newest first.
   for _sock in /tmp/ssh-*/agent.*(N=om); do
-    if [[ -O "$_sock" ]] && _agent_alive "$_sock"; then
+    if [[ -O "$_sock" && ! -L "$_sock" ]] && _agent_alive "$_sock"; then
       mkdir -p "$HOME/.ssh"
       ln -sfn "$_sock" "$_link" 2>/dev/null
       break
