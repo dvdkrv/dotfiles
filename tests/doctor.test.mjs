@@ -72,7 +72,7 @@ printf 'nats-server: v%s\\n' "\${FAKE_NATS_VERSION:-2.14.6}"
   writeExecutable(join(bin, 'pi'), `#!/usr/bin/env bash
 case "\${1:-}" in
   --version)
-    printf '%s\\n' "\${FAKE_PI_VERSION:-1.0.0}"
+    printf '%s\\n' "\${FAKE_PI_VERSION:-1.3.0}"
     ;;
   list)
     case "\${FAKE_PI_LIST_MODE:-complete}" in
@@ -115,7 +115,7 @@ esac
     PI_CODING_AGENT_DIR: agentDir,
     FAKE_NODE_VERSION: 'v22.19.0',
     FAKE_NATS_VERSION: '2.14.6',
-    FAKE_PI_VERSION: '1.0.0',
+    FAKE_PI_VERSION: '1.3.0',
     FAKE_PI_LIST_MODE: 'complete',
     FAKE_TMUX_VERSION: '3.7c',
     FAKE_TMUX_CLIENTS: 'no-server',
@@ -143,7 +143,7 @@ test('doctor accepts reviewed versions and warns for uninitialized optional stat
   const output = outputOf(result);
 
   assert.equal(result.status, 0, output);
-  assert.match(output, /Pi.*1\.0\.0/i);
+  assert.match(output, /Pi.*1\.3\.0/i);
   assert.match(output, /Node.*22\.19\.0/i);
   assert.match(output, /NATS.*2\.14\.6/i);
   assert.match(output, /pi-tools.*v0\.6\.4/i);
@@ -154,7 +154,7 @@ test('doctor accepts reviewed versions and warns for uninitialized optional stat
 });
 
 for (const [name, overrides, message] of [
-  ['old Pi', { FAKE_PI_VERSION: '0.82.0' }, /Pi.*1\.0\.0/i],
+  ['old Pi', { FAKE_PI_VERSION: '1.0.0' }, /Pi.*1\.3\.0/i],
   ['old Node', { FAKE_NODE_VERSION: 'v22.18.0' }, /Node.*22\.19\.0/i],
   ['old NATS', { FAKE_NATS_VERSION: '2.14.5' }, /NATS.*2\.14\.6/i],
   ['wrong NATS major', { FAKE_NATS_VERSION: '3.0.0' }, /NATS.*major.*2/i],

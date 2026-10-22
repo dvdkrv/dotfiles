@@ -118,7 +118,7 @@ test('Pi and package installers are pinned and do not hide required failures', (
   const piInstaller = repositoryFile('run_onchange_after_05-install-pi.sh.tmpl');
   const packageInstaller = repositoryFile('run_onchange_after_06-install-pi-packages.sh.tmpl');
 
-  assert.match(piInstaller, /^PI_VERSION="1\.0\.0"$/m);
+  assert.match(piInstaller, /^PI_VERSION="1\.3\.0"$/m);
   assert.match(piInstaller, /@earendil-works\/pi-coding-agent@"\$PI_VERSION"/);
   assert.doesNotMatch(packageInstaller, /pi install .*\|\| true/);
   assert.doesNotMatch(packageInstaller, /command -v (?:pi|npm).*\|\| exit 0/);
