@@ -268,6 +268,14 @@ if command -v chezmoi >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
             bad "broken:  ${file#"$repo"/}"
         fi
     done
+    if [[ -e "$repo/dot_pi/agent/modify_settings.json" ]]; then
+        any=1
+        if chezmoi --source "$repo" cat "$HOME/.pi/agent/settings.json" | jq -e . >/dev/null 2>&1; then
+            ok "renders: dot_pi/agent/modify_settings.json"
+        else
+            bad "broken:  dot_pi/agent/modify_settings.json"
+        fi
+    fi
     [[ $any -eq 0 ]] && warn "no JSON templates found"
 else
     warn "chezmoi or jq missing — skipping template render checks"

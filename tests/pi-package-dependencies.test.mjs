@@ -18,7 +18,6 @@ function pkg(path) {
 }
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../', import.meta.url));
-const SETTINGS_TEMPLATE = join(REPOSITORY_ROOT, 'dot_pi/agent/settings.json.tmpl');
 const PI_TOOLS_SOURCE = 'git:git@github.com:dvdkrv/pi-tools.git@v0.6.4';
 const SUPERPOWERS_SOURCE = 'git:github.com/obra/superpowers@v6.2.0';
 
@@ -38,12 +37,11 @@ function renderPiSettings() {
         '--source', REPOSITORY_ROOT,
         '--destination', home,
         '--persistent-state', state,
-        'execute-template',
+        'cat', join(home, '.pi/agent/settings.json'),
       ],
       {
         cwd: REPOSITORY_ROOT,
         env: { ...process.env, HOME: home },
-        input: readFileSync(SETTINGS_TEMPLATE, 'utf8'),
         encoding: 'utf8',
       },
     );

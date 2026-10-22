@@ -102,6 +102,7 @@ esac
 case "\${1:-}" in
   doctor) exit 0 ;;
   execute-template) exec ${JSON.stringify(realChezmoi)} "$@" ;;
+  --source) exec ${JSON.stringify(realChezmoi)} "$@" ;;
   *) exit 0 ;;
 esac
 `);

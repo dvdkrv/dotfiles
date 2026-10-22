@@ -1,0 +1,15 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- /* Personal Pi settings, merged with an optional private overlay (see docs/specs/2026-10-12-overlay-hooks-design.md),
+       laid over the current file: keys Pi writes itself (lastChangelogVersion, ...) are kept, managed keys win.
+       A key removed from the managed settings stays in the file until it is deleted by hand.
+       When the result means the same as the current file, the file is left byte for byte (Pi's key
+       order and trailing newline), so Pi's own writes never make chezmoi prompt. */ -}}
+{{- $managed := includeTemplate "overlay-merge" (dict "base" (include ".chezmoitemplates/pi-settings.json" | fromJson) "path" (joinPath .chezmoi.homeDir ".config/dotfiles-overlay/pi-settings.json") "lists" (list "packages")) | fromJson -}}
+{{- $current := dict -}}
+{{- if trim .chezmoi.stdin -}}{{- $current = .chezmoi.stdin | fromJson -}}{{- end -}}
+{{- $merged := mergeOverwrite (deepCopy $current) $managed -}}
+{{- if eq (toJson $merged) (toJson $current) -}}
+{{-   .chezmoi.stdin -}}
+{{- else -}}
+{{-   $merged | toPrettyJson }}
+{{ end -}}

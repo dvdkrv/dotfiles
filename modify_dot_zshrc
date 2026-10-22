@@ -1,0 +1,24 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- /* The managed zshrc, then lines other tools appended (installers add their init lines), kept
+       below a marker. On the first apply (no marker yet), only the lines after the last managed line
+       move there, so lines edited in place are shown in the diff and replaced, never moved.
+       Delete a kept line by hand to drop it. */ -}}
+{{- $managed := includeTemplate "zshrc" . | trimSuffix "\n" -}}
+{{- $marker := "# Added by other tools; chezmoi keeps lines below this marker." -}}
+{{- $current := .chezmoi.stdin | replace "\r\n" "\n" -}}
+{{- $parts := splitList (printf "\n%s\n" $marker) (printf "\n%s" $current) -}}
+{{- $candidates := splitList "\n" (last $parts) -}}
+{{- $known := list -}}
+{{- if eq (len $parts) 1 -}}{{- $known = splitList "\n" $managed -}}{{- end -}}
+{{- $kept := list -}}
+{{- range $candidates -}}
+{{-   if not (trim .) -}}
+{{-   else if has . $known -}}{{- $kept = list -}}
+{{-   else -}}{{- $kept = append $kept . -}}
+{{-   end -}}
+{{- end -}}
+{{ $managed }}
+{{ if $kept }}
+{{ $marker }}
+{{ join "\n" $kept }}
+{{ end -}}

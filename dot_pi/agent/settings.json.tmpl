@@ -1,2 +1,0 @@
-{{- /* Personal Pi settings, merged with an optional private overlay (see docs/specs/2026-10-12-overlay-hooks-design.md). */ -}}
-{{- template "overlay-merge" (dict "base" (include ".chezmoitemplates/pi-settings.json" | fromJson) "path" (joinPath .chezmoi.homeDir ".config/dotfiles-overlay/pi-settings.json") "lists" (list "packages")) }}

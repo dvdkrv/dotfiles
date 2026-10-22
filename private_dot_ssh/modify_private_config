@@ -1,0 +1,27 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- /* ~/.ssh/config: everything outside the chezmoi block is kept; the block is (re)written at the end.
+       Unbalanced markers fail the apply, leaving the file untouched. */ -}}
+{{- $begin := "## BEGIN -- chezmoi" -}}
+{{- $end := "## END -- chezmoi" -}}
+{{- $rest := list -}}
+{{- $inside := false -}}
+{{- $seen := false -}}
+{{- range splitList "\n" (.chezmoi.stdin | replace "\r\n" "\n") -}}
+{{-   if eq . $begin -}}
+{{-     if or $inside $seen -}}{{- fail "Refusing to update ~/.ssh/config: unbalanced chezmoi markers" -}}{{- end -}}
+{{-     $inside = true -}}{{- $seen = true -}}
+{{-   else if eq . $end -}}
+{{-     if not $inside -}}{{- fail "Refusing to update ~/.ssh/config: unbalanced chezmoi markers" -}}{{- end -}}
+{{-     $inside = false -}}
+{{-   else if not $inside -}}
+{{-     $rest = append $rest . -}}
+{{-   end -}}
+{{- end -}}
+{{- if $inside -}}{{- fail "Refusing to update ~/.ssh/config: unbalanced chezmoi markers" -}}{{- end -}}
+{{- $kept := join "\n" $rest | trimAll "\n" -}}
+{{- if $kept }}{{ $kept }}
+
+{{ end -}}
+{{ $begin }}
+Include ~/.ssh/config_chezmoi
+{{ $end }}

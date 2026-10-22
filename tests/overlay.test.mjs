@@ -8,8 +8,9 @@ import { spawnSync } from 'node:child_process';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
-// Render a source template for a fresh home, optionally with overlay files.
-function render(templatePath, overlay = {}) {
+// Render a source template (or, with { target }, what chezmoi writes to a home target) for a fresh
+// home, optionally with overlay files.
+function render(templatePath, overlay = {}, { target } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'dotfiles-overlay-'));
   const home = join(root, 'home');
   const overlayDir = join(home, '.config', 'dotfiles-overlay');
@@ -20,10 +21,10 @@ function render(templatePath, overlay = {}) {
   const config = join(root, 'chezmoi.toml');
   writeFileSync(config, `sourceDir = ${JSON.stringify(ROOT)}\n`);
   try {
-    const result = spawnSync('chezmoi', ['--config', config, '--source', ROOT, '--destination', home, '--persistent-state', join(root, 'state.boltdb'), 'execute-template'], {
+    const result = spawnSync('chezmoi', ['--config', config, '--source', ROOT, '--destination', home, '--persistent-state', join(root, 'state.boltdb'), ...(target ? ['cat', join(home, target)] : ['execute-template'])], {
       cwd: ROOT,
       env: { ...process.env, HOME: home },
-      input: readFileSync(join(ROOT, templatePath), 'utf8'),
+      input: target ? '' : readFileSync(join(ROOT, templatePath), 'utf8'),
       encoding: 'utf8',
     });
     assert.equal(result.status, 0, result.stderr);
@@ -32,7 +33,7 @@ function render(templatePath, overlay = {}) {
     rmSync(root, { recursive: true, force: true });
   }
 }
-const pi = (overlay) => JSON.parse(render('dot_pi/agent/settings.json.tmpl', overlay).output);
+const pi = (overlay) => JSON.parse(render(null, overlay, { target: '.pi/agent/settings.json' }).output);
 
 test('without an overlay, Pi settings hold only personal entries', () => {
   const settings = pi();
