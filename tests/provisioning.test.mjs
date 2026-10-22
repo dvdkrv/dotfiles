@@ -100,6 +100,11 @@ test('future provisioning omits the retired roaming-shell transport', () => {
   assert.equal(existsSync(new URL(`../dot_local/bin/${removed}-with-agent.sh`, import.meta.url)), false);
 });
 
+test('cross-platform package bundle provisions uv, for uv-managed tools in overlays', () => {
+  const packages = repositoryFile('dot_Brewfile');
+  assert.equal(packages.split(/\r?\n/).filter(line => line === 'brew "uv"').length, 1);
+});
+
 test('cross-platform package bundle provisions the Pi messaging broker', () => {
   const packages = repositoryFile('dot_Brewfile');
   assert.equal(
